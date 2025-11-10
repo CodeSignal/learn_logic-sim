@@ -1,0 +1,30 @@
+{
+  "defaultZoom": 1.5,
+  "paletteOrder": [
+    "input",
+    "output",
+    "buffer",
+    "not",
+    "and",
+    "nand",
+    "or",
+    "nor",
+    "xor"
+  ],
+  "exportReport": {
+    "enabled": true,
+    "sections": {
+      "summary": true,
+      "gateCounts": true,
+      "gatePositions": true,
+      "spatialMetrics": true,
+      "connectionSummary": true,
+      "floatingPins": true,
+      "truthTable": true
+    },
+    "truthTable": {
+      "maxInputs": 6,
+      "maxRows": 64
+    }
+  }
+}

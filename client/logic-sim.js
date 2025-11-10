@@ -1,0 +1,1594 @@
+(function() {
+  const STORAGE_KEY = 'logic-circuit-lab-state-v1';
+  const BASE_ICON_SIZE = 64;
+  const WORKSPACE_SIZE = 6000;
+  const DEFAULT_SCALE = 1.5;
+  const MIN_SCALE = 0.5;
+  const MAX_SCALE = 2.75;
+  const PORT_SIZE = 8;
+  const GRID_SIZE = 16;
+  const SAVE_DEBOUNCE = 500;
+  const RETRY_DELAY = 3000;
+  const GATE_SCALE = 1;
+  const GATE_PIXEL_SIZE = BASE_ICON_SIZE * GATE_SCALE;
+
+  const snapToGrid = (value) => Math.round(value / GRID_SIZE) * GRID_SIZE;
+
+  const registrySource = typeof window !== 'undefined' ? window.gateRegistry : null;
+  if (!registrySource || !registrySource.definitions) {
+    throw new Error('Gate registry is not available');
+  }
+  const gateDefinitions = registrySource.definitions;
+  const defaultPaletteOrder = Array.isArray(registrySource.paletteOrder) && registrySource.paletteOrder.length
+    ? registrySource.paletteOrder.slice()
+    : Object.keys(gateDefinitions);
+
+  const ready = (callback) => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', callback);
+    } else {
+      callback();
+    }
+  };
+
+  ready(async () => {
+    const setStatus = typeof window.setStatus === 'function' ? window.setStatus : () => {};
+    const paletteEl = document.getElementById('palette');
+    const canvasEl = document.getElementById('canvas');
+    const wireLayer = document.getElementById('wire-layer');
+    const selectionEl = document.getElementById('selection-details');
+    const clearButton = document.getElementById('btn-clear-canvas');
+
+    if (!paletteEl || !canvasEl || !wireLayer) {
+      return;
+    }
+
+    const canvasWrapper = canvasEl.parentElement;
+    canvasEl.style.width = `${WORKSPACE_SIZE}px`;
+    canvasEl.style.height = `${WORKSPACE_SIZE}px`;
+    canvasEl.style.transformOrigin = '0 0';
+    wireLayer.setAttribute('viewBox', `0 0 ${WORKSPACE_SIZE} ${WORKSPACE_SIZE}`);
+    wireLayer.setAttribute('width', WORKSPACE_SIZE);
+    wireLayer.setAttribute('height', WORKSPACE_SIZE);
+    wireLayer.style.width = `${WORKSPACE_SIZE}px`;
+    wireLayer.style.height = `${WORKSPACE_SIZE}px`;
+    wireLayer.style.transformOrigin = '0 0';
+
+    const view = {
+      scale: DEFAULT_SCALE,
+      offsetX: 0,
+      offsetY: 0
+    };
+
+    let paletteOrder = defaultPaletteOrder.slice();
+
+    const state = {
+      gates: new Map(),
+      connections: [],
+      nextId: 1
+    };
+
+    const gateElements = new Map();
+    let selectionId = null;
+    let pendingConnection = null;
+    let ghostWire = null;
+    let dragInfo = null;
+    let panInfo = null;
+    let skipClickAction = false;
+    let saveTimer = null;
+    let retryTimer = null;
+    let exportRetryTimer = null;
+    let hasLoadedState = false;
+    let lastWrapperSize = { width: 0, height: 0 };
+    let contextMenu = null;
+
+    const storageSupported = (() => {
+      try {
+        const key = '__logic_sim_test__';
+        window.localStorage.setItem(key, key);
+        window.localStorage.removeItem(key);
+        return true;
+      } catch (error) {
+        console.warn('Local storage not available:', error);
+        return false;
+      }
+    })();
+
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+    const closeContextMenu = () => {
+      if (contextMenu && contextMenu.element) {
+        contextMenu.element.removeEventListener('pointerdown', stopPropagation);
+        contextMenu.element.remove();
+      }
+      contextMenu = null;
+    };
+
+    const stopPropagation = (event) => {
+      event.stopPropagation();
+    };
+
+    const loadGateConfig = async () => {
+      try {
+        const response = await fetch('./gate-config.json', { cache: 'no-store' });
+        if (!response.ok) {
+          return;
+        }
+        const data = await response.json();
+        if (data && Array.isArray(data.paletteOrder)) {
+          const filtered = data.paletteOrder.filter((type) => gateDefinitions[type]);
+          if (filtered.length) {
+            paletteOrder = filtered;
+          }
+        }
+        if (data && typeof data.defaultZoom === 'number') {
+          const clampedZoom = clamp(data.defaultZoom, MIN_SCALE, MAX_SCALE);
+          view.scale = clampedZoom;
+          applyViewTransform();
+        }
+      } catch (error) {
+        console.warn('Failed to load gate-config.json:', error);
+      }
+    };
+
+    const normalizeSnapshot = (input = {}) => {
+      const payload = input && typeof input === 'object'
+        ? (typeof input.snapshot === 'object' ? input.snapshot : input)
+        : {};
+
+      const gatesSource = Array.isArray(payload.gates)
+        ? payload.gates
+        : (Array.isArray(payload.positions) ? payload.positions : []);
+
+      const gates = gatesSource.map((entry) => ({
+        id: entry.id,
+        type: entry.type,
+        x: Number(entry.x) || 0,
+        y: Number(entry.y) || 0,
+        label: typeof entry.label === 'string' ? entry.label : '',
+        state: Number(entry.state) === 1 ? 1 : 0
+      }));
+
+      const normalizePortIndex = (value) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : 0;
+      };
+
+      const connections = Array.isArray(payload.connections)
+        ? payload.connections.map((connection) => ({
+            id: connection.id,
+            from: {
+              gateId: connection.from?.gateId,
+              portIndex: normalizePortIndex(connection.from?.portIndex)
+            },
+            to: {
+              gateId: connection.to?.gateId,
+              portIndex: normalizePortIndex(connection.to?.portIndex)
+            }
+          }))
+        : [];
+
+      const nextId = Number(payload.nextId);
+
+      return {
+        version: Number(payload.version) || 1,
+        nextId: Number.isFinite(nextId) && nextId > 0 ? nextId : undefined,
+        gates,
+        connections
+      };
+    };
+
+    const applyViewTransform = () => {
+      const transform = `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`;
+      canvasEl.style.transform = transform;
+      wireLayer.style.transform = transform;
+    };
+
+    const updateWrapperSize = () => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      if (!lastWrapperSize.width && !lastWrapperSize.height) {
+        view.offsetX = rect.width / 2 - (WORKSPACE_SIZE * view.scale) / 2;
+        view.offsetY = rect.height / 2 - (WORKSPACE_SIZE * view.scale) / 2;
+      } else {
+        const centerWorld = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        view.offsetX = rect.width / 2 - centerWorld.x * view.scale;
+        view.offsetY = rect.height / 2 - centerWorld.y * view.scale;
+      }
+      applyViewTransform();
+      lastWrapperSize = { width: rect.width, height: rect.height };
+    };
+
+    const screenToWorld = (clientX, clientY) => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left - view.offsetX) / view.scale,
+        y: (clientY - rect.top - view.offsetY) / view.scale
+      };
+    };
+
+    const worldToScreen = (worldX, worldY) => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      return {
+        x: rect.left + view.offsetX + worldX * view.scale,
+        y: rect.top + view.offsetY + worldY * view.scale
+      };
+    };
+
+    const scheduleRender = () => {
+      renderConnections();
+      state.gates.forEach((gate) => updateGateElementState(gate));
+      updateSelectionPanel();
+    };
+
+    const markDirty = () => {
+      if (!hasLoadedState || !storageSupported) {
+        return;
+      }
+      if (saveTimer) {
+        window.clearTimeout(saveTimer);
+      }
+      saveTimer = window.setTimeout(saveState, SAVE_DEBOUNCE);
+    };
+
+    const getCircuitSnapshot = () => ({
+      version: 1,
+      nextId: state.nextId,
+      gates: Array.from(state.gates.values()).map((gate) => ({
+        id: gate.id,
+        type: gate.type,
+        x: gate.x,
+        y: gate.y,
+        state: gate.state ?? 0,
+        label: gate.label || ''
+      })),
+      connections: state.connections.map((connection) => ({
+        id: connection.id,
+        from: {
+          gateId: connection.from.gateId,
+          portIndex: connection.from.portIndex
+        },
+        to: {
+          gateId: connection.to.gateId,
+          portIndex: connection.to.portIndex
+        }
+      }))
+    });
+
+    const persistSnapshot = (snapshot) => {
+      if (!storageSupported) {
+        return;
+      }
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+      } catch (error) {
+        console.warn('Failed to persist circuit snapshot:', error);
+      }
+    };
+
+    const serializeSnapshotToVhdl = (snapshot = { gates: [], connections: [] }) => {
+      const gateMap = new Map((snapshot.gates || []).map((gate) => [gate.id, gate]));
+      const connectionLookup = new Map();
+      (snapshot.connections || []).forEach((connection) => {
+        if (!connection?.to?.gateId) {
+          return;
+        }
+        const key = `${connection.to.gateId}:${Number(connection.to.portIndex) || 0}`;
+        connectionLookup.set(key, {
+          gateId: connection.from?.gateId,
+          portIndex: Number(connection.from?.portIndex) || 0
+        });
+      });
+
+      const usedNames = new Set();
+      const signalNameMap = new Map();
+      const portNameMap = new Map();
+
+      const sanitizeIdentifier = (value, fallback) => {
+        const cleaned = (value || '')
+          .toString()
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9_]+/g, '_');
+        let candidate = cleaned.replace(/^[^a-z_]+/, '');
+        if (!candidate) {
+          candidate = fallback;
+        }
+        return candidate || fallback;
+      };
+
+      const ensureUnique = (base) => {
+        let candidate = base;
+        let counter = 1;
+        while (usedNames.has(candidate.toLowerCase())) {
+          candidate = `${base}_${counter}`;
+          counter += 1;
+        }
+        usedNames.add(candidate.toLowerCase());
+        return candidate;
+      };
+
+      const getSignalName = (gate, index = 0) => {
+        const key = `${gate.id}:${index}`;
+        if (signalNameMap.has(key)) {
+          return signalNameMap.get(key);
+        }
+        const definition = gateDefinitions[gate.type];
+        const typeSlug = sanitizeIdentifier((definition?.label || gate.type), `node_${gate.id}`);
+        const labelSlug = (gate.label || '').trim() ? sanitizeIdentifier(gate.label, `${typeSlug}_${gate.id}`) : '';
+        const base = labelSlug || `${typeSlug}_${gate.id}_${index}`;
+        const unique = ensureUnique(base || `node_${gate.id}_${index}`);
+        signalNameMap.set(key, unique);
+        return unique;
+      };
+
+      const getPortName = (gate) => {
+        if (portNameMap.has(gate.id)) {
+          return portNameMap.get(gate.id);
+        }
+        const definition = gateDefinitions[gate.type];
+        const typeSlug = sanitizeIdentifier((definition?.label || gate.type), `out_${gate.id}`);
+        const baseCandidate = (gate.label || '').trim() ? sanitizeIdentifier(gate.label, `${typeSlug}_${gate.id}`) : `${typeSlug}_${gate.id}`;
+        const unique = ensureUnique(baseCandidate || `out_${gate.id}`);
+        portNameMap.set(gate.id, unique);
+        return unique;
+      };
+
+      const resolveInputSignal = (gateId, portIndex) => {
+        const key = `${gateId}:${portIndex}`;
+        const from = connectionLookup.get(key);
+        if (!from) {
+          return `'0'`;
+        }
+        const sourceGate = gateMap.get(from.gateId);
+        if (!sourceGate) {
+          return `'0'`;
+        }
+        return getSignalName(sourceGate, from.portIndex || 0);
+      };
+
+      const signalDeclarations = new Set();
+      const assignmentLines = [];
+      const outputAssignments = [];
+      const outputPorts = [];
+
+      (snapshot.gates || []).forEach((gate) => {
+        const definition = gateDefinitions[gate.type];
+        if (!definition) {
+          return;
+        }
+
+        if (definition.outputs > 0 && gate.type !== 'output') {
+          for (let i = 0; i < definition.outputs; i += 1) {
+            const sig = getSignalName(gate, i);
+            signalDeclarations.add(`signal ${sig} : STD_LOGIC;`);
+          }
+        }
+
+        if (gate.type === 'input') {
+          const sig = getSignalName(gate, 0);
+          const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
+          assignmentLines.push(`${sig} <= '${gate.state ? '1' : '0'}';${comment}`);
+          return;
+        }
+
+        if (gate.type === 'output') {
+          const inputSignal = resolveInputSignal(gate.id, 0);
+          const portName = getPortName(gate);
+          outputPorts.push(`${portName} : out STD_LOGIC`);
+          const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
+          outputAssignments.push(`${portName} <= ${inputSignal || "'0'"};${comment}`);
+          return;
+        }
+
+        const definitionInputs = definition.inputs || 0;
+        const inputSignals = [];
+        for (let i = 0; i < definitionInputs; i += 1) {
+          inputSignals.push(resolveInputSignal(gate.id, i));
+        }
+        const normalizedInputs = inputSignals.length ? inputSignals : [`'0'`];
+        const targetSignal = getSignalName(gate, 0);
+
+        const binaryExpression = (operator) => normalizedInputs.reduce((acc, curr) => (
+          acc ? `${acc} ${operator} ${curr}` : curr
+        ), '');
+
+        let expression;
+        switch (gate.type) {
+          case 'buffer':
+            expression = normalizedInputs[0] || `'0'`;
+            break;
+          case 'not':
+            expression = `not ${normalizedInputs[0] || "'0'"}`;
+            break;
+          case 'and':
+            expression = binaryExpression('and') || `'0'`;
+            break;
+          case 'nand':
+            expression = `not (${binaryExpression('and') || "'0'"})`;
+            break;
+          case 'or':
+            expression = binaryExpression('or') || `'0'`;
+            break;
+          case 'nor':
+            expression = `not (${binaryExpression('or') || "'0'"})`;
+            break;
+          case 'xor':
+            expression = binaryExpression('xor') || `'0'`;
+            break;
+          default:
+            expression = normalizedInputs[0] || `'0'`;
+        }
+
+        const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
+        assignmentLines.push(`${targetSignal} <= ${expression};${comment}`);
+      });
+
+      const commentLines = [
+        '-- Logic Circuit Lab export',
+        ''
+      ];
+
+      const headerLines = [
+        'library IEEE;',
+        'use IEEE.STD_LOGIC_1164.ALL;',
+        ''
+      ];
+
+      const entityLines = outputPorts.length
+        ? [
+            'entity logic_circuit_lab is',
+            '  port (',
+            `    ${outputPorts.join(',\n    ')}`,
+            '  );',
+            'end entity logic_circuit_lab;',
+            ''
+          ]
+        : [
+            'entity logic_circuit_lab is',
+            'end entity logic_circuit_lab;',
+            ''
+          ];
+
+      const architectureLines = [
+        'architecture behavioral of logic_circuit_lab is',
+        ...Array.from(signalDeclarations).map((line) => `  ${line}`),
+        'begin',
+        ...assignmentLines.map((line) => `  ${line}`),
+        ...outputAssignments.map((line) => `  ${line}`),
+        'end architecture behavioral;',
+        ''
+      ];
+
+      return [
+        ...commentLines,
+        ...headerLines,
+        ...entityLines,
+        ...architectureLines
+      ].join('\n');
+    };
+
+    const exportCircuitToVhdl = async () => {
+      if (exportRetryTimer) {
+        window.clearTimeout(exportRetryTimer);
+        exportRetryTimer = null;
+      }
+      const snapshot = getCircuitSnapshot();
+      const vhdl = serializeSnapshotToVhdl(snapshot);
+      try {
+        setStatus('Saving...');
+        const response = await fetch('/vhdl/export', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ vhdl, state: snapshot })
+        });
+        if (!response.ok) {
+          throw new Error(`Export failed with status ${response.status}`);
+        }
+        setStatus('Changes saved', { revertDelay: 1200 });
+      } catch (error) {
+        console.error('Failed to export VHDL:', error);
+        setStatus('Save failed (will retry)', { revertDelay: 2000 });
+        if (!exportRetryTimer) {
+          exportRetryTimer = window.setTimeout(() => {
+            exportRetryTimer = null;
+            exportCircuitToVhdl();
+          }, RETRY_DELAY);
+        }
+      }
+    };
+
+    const saveState = () => {
+      if (saveTimer) {
+        window.clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      if (!storageSupported) {
+        return;
+      }
+      const payload = getCircuitSnapshot();
+
+      try {
+        setStatus('Saving...');
+        persistSnapshot(payload);
+        setStatus('Changes saved', { revertDelay: 1200 });
+      } catch (error) {
+        console.error('Failed to save circuit:', error);
+        setStatus('Save failed (will retry)', { revertDelay: 2000 });
+        if (!retryTimer) {
+          retryTimer = window.setTimeout(() => {
+            retryTimer = null;
+            saveState();
+          }, RETRY_DELAY);
+        }
+      }
+    };
+
+    const loadStarterCircuit = async ({ updateStatus = false, persist = false, showErrors = true } = {}) => {
+      if (updateStatus) {
+        setStatus('Loading...');
+      }
+      try {
+        const response = await fetch('./initial_state.json', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`initial_state.json responded with ${response.status}`);
+        }
+        const data = await response.json();
+        const snapshot = normalizeSnapshot(data) || { gates: [], connections: [], nextId: 1 };
+        applyCircuitSnapshot(snapshot);
+        if (persist) {
+          persistSnapshot(getCircuitSnapshot());
+        }
+        if (updateStatus) {
+          setStatus('Ready');
+        }
+        return true;
+      } catch (error) {
+        console.error('Failed to load initial_state.json:', error);
+        applyCircuitSnapshot({ gates: [], connections: [], nextId: 1 });
+        if (showErrors) {
+          setStatus('Failed to load data', { revertDelay: 2000 });
+        }
+        return false;
+      }
+    };
+
+    const loadState = async () => {
+      setStatus('Loading...');
+      await loadStarterCircuit({ updateStatus: false, persist: false, showErrors: false });
+
+      if (!storageSupported) {
+        hasLoadedState = true;
+        setStatus('Auto-save initialized', { revertDelay: 1200 });
+        return;
+      }
+
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          applyCircuitSnapshot(parsed);
+        } else {
+          persistSnapshot(getCircuitSnapshot());
+        }
+        hasLoadedState = true;
+        setStatus('Auto-save initialized', { revertDelay: 1200 });
+      } catch (error) {
+        console.error('Failed to load saved circuit:', error);
+        persistSnapshot(getCircuitSnapshot());
+        hasLoadedState = true;
+        setStatus('Failed to load data', { revertDelay: 2000 });
+      }
+    };
+
+    const createGateId = () => `g${state.nextId++}`;
+    const createConnectionId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+    const restoreGate = (entry) => {
+      if (!entry || !gateDefinitions[entry.type]) {
+        return;
+      }
+      const gate = {
+        id: entry.id || createGateId(),
+        type: entry.type,
+        x: typeof entry.x === 'number' ? entry.x : 0,
+        y: typeof entry.y === 'number' ? entry.y : 0,
+        state: Number(entry.state) === 1 ? 1 : 0,
+        label: typeof entry.label === 'string' ? entry.label : '',
+        outputValues: new Array(gateDefinitions[entry.type].outputs).fill(0),
+        inputCache: new Array(gateDefinitions[entry.type].inputs).fill(0)
+      };
+      gate.x = clamp(gate.x, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+      gate.y = clamp(gate.y, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+      state.gates.set(gate.id, gate);
+      const element = createGateElement(gate);
+      canvasEl.appendChild(element);
+      gateElements.set(gate.id, element);
+      positionGateElement(gate);
+      updateGateLabelDisplay(gate);
+    };
+
+    const recomputeNextId = () => {
+      let maxId = 0;
+      state.gates.forEach((gate) => {
+        const numeric = Number(String(gate.id).replace(/\D+/g, ''));
+        if (!Number.isNaN(numeric)) {
+          maxId = Math.max(maxId, numeric);
+        }
+      });
+      state.nextId = Math.max(maxId + 1, 1);
+    };
+
+    const buildPalette = () => {
+      paletteEl.innerHTML = '';
+      paletteOrder.forEach((type) => {
+        const definition = gateDefinitions[type];
+        if (!definition) {
+          return;
+        }
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'palette-item';
+        item.draggable = true;
+        item.dataset.type = type;
+        item.title = definition.label;
+
+        const icon = document.createElement('span');
+        icon.className = 'palette-icon';
+        icon.style.setProperty('--gate-icon', `url("${definition.icon}")`);
+
+        const label = document.createElement('span');
+        label.className = 'palette-label';
+        label.textContent = definition.label;
+
+        item.append(icon, label);
+
+        item.addEventListener('click', () => {
+          const center = getViewCenterWorld();
+          addGate(type, center.x, center.y, { coordinates: 'world' });
+        });
+
+        item.addEventListener('dragstart', (event) => {
+          event.dataTransfer.setData('application/x-logic-gate', type);
+          event.dataTransfer.setData('text/plain', type);
+          event.dataTransfer.effectAllowed = 'copy';
+        });
+
+        paletteEl.appendChild(item);
+      });
+    };
+
+    const getViewCenterWorld = () => {
+      const rect = canvasWrapper.getBoundingClientRect();
+      return screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
+
+    const addGate = (type, posX, posY, options = { coordinates: 'screen' }) => {
+      const definition = gateDefinitions[type];
+      if (!definition) {
+        return;
+      }
+      const worldPoint = options.coordinates === 'world'
+        ? { x: posX, y: posY }
+        : screenToWorld(posX, posY);
+
+      const gate = {
+        id: createGateId(),
+        type,
+        x: snapToGrid(worldPoint.x - GATE_PIXEL_SIZE / 2),
+        y: snapToGrid(worldPoint.y - GATE_PIXEL_SIZE / 2),
+        state: type === 'input' ? 0 : 0,
+        label: '',
+        outputValues: new Array(definition.outputs).fill(0),
+        inputCache: new Array(definition.inputs).fill(0)
+      };
+
+      gate.x = clamp(gate.x, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+      gate.y = clamp(gate.y, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+
+      state.gates.set(gate.id, gate);
+      const element = createGateElement(gate);
+      canvasEl.appendChild(element);
+      gateElements.set(gate.id, element);
+      positionGateElement(gate);
+      updateGateLabelDisplay(gate);
+      selectGate(gate.id);
+      evaluateCircuit(true);
+      scheduleRender();
+      markDirty();
+    };
+
+    const runGateAction = (gate, actionId) => {
+      const definition = gateDefinitions[gate.type];
+      if (!definition || !Array.isArray(definition.actions)) {
+        return false;
+      }
+      const action = definition.actions.find((candidate) => candidate.id === actionId);
+      if (!action) {
+        return false;
+      }
+      action.perform({
+        gate,
+        evaluateCircuit,
+        scheduleRender,
+        markDirty,
+        refreshSelection: () => updateSelectionPanel()
+      });
+      return true;
+    };
+
+    const createGateElement = (gate) => {
+      const definition = gateDefinitions[gate.type];
+      const element = document.createElement('div');
+      element.className = `gate gate-${gate.type}`;
+      element.dataset.id = gate.id;
+      element.title = definition.label;
+      element.style.setProperty('--gate-color', 'var(--logic-gate-base)');
+
+      const icon = document.createElement('div');
+      icon.className = 'gate-icon';
+      icon.setAttribute('role', 'img');
+      icon.setAttribute('aria-label', `${definition.label} gate`);
+      icon.style.setProperty('--gate-icon', `url("${definition.icon}")`);
+      element.appendChild(icon);
+
+      const nameTag = document.createElement('div');
+      nameTag.className = 'gate-label';
+      element.appendChild(nameTag);
+
+      for (let i = 0; i < definition.inputs; i += 1) {
+        element.appendChild(createPort('input', gate.id, i, definition));
+      }
+      for (let i = 0; i < definition.outputs; i += 1) {
+        element.appendChild(createPort('output', gate.id, i, definition));
+      }
+
+      element.addEventListener('click', (event) => {
+        if (event.target.closest('.port')) {
+          return;
+        }
+        if (skipClickAction) {
+          skipClickAction = false;
+          return;
+        }
+        selectGate(gate.id);
+        if (definition.primaryAction) {
+          runGateAction(gate, definition.primaryAction);
+        }
+      });
+
+      element.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        selectGate(gate.id);
+        openContextMenu(gate, event);
+      });
+
+      element.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || event.target.closest('.port')) {
+          return;
+        }
+        event.preventDefault();
+        closeContextMenu();
+        selectGate(gate.id);
+        startDrag(event, gate.id);
+      });
+
+      return element;
+    };
+
+    const createPort = (kind, gateId, index, definition) => {
+      const port = document.createElement('button');
+      port.type = 'button';
+      port.className = `port ${kind}`;
+      port.dataset.portType = kind;
+      port.dataset.index = String(index);
+      port.title = `${kind === 'input' ? 'Input' : 'Output'} ${index + 1}`;
+      const positions = definition.portLayout?.[kind === 'input' ? 'inputs' : 'outputs'] || [];
+      const coordinates = positions[index];
+      if (coordinates) {
+        port.style.left = `${coordinates.x * GATE_SCALE - PORT_SIZE / 2}px`;
+        port.style.top = `${coordinates.y * GATE_SCALE - PORT_SIZE / 2}px`;
+      }
+      port.addEventListener('click', (event) => handlePortClick(event, gateId));
+      return port;
+    };
+
+    const positionGateElement = (gate) => {
+      const element = gateElements.get(gate.id);
+      if (!element) {
+        return;
+      }
+      element.style.left = `${gate.x}px`;
+      element.style.top = `${gate.y}px`;
+    };
+
+    const selectGate = (gateId) => {
+      if (selectionId === gateId) {
+        return;
+      }
+      if (selectionId) {
+        const previous = gateElements.get(selectionId);
+        if (previous) {
+          previous.classList.remove('is-selected');
+        }
+      }
+      selectionId = gateId;
+      if (selectionId) {
+        const current = gateElements.get(selectionId);
+        if (current) {
+          current.classList.add('is-selected');
+        }
+      }
+      updateSelectionPanel();
+    };
+
+    const updateSelectionPanel = () => {
+      if (!selectionEl) {
+        return;
+      }
+      selectionEl.innerHTML = '';
+      if (!selectionId) {
+        const placeholder = document.createElement('p');
+        placeholder.textContent = 'No component selected';
+        selectionEl.appendChild(placeholder);
+        return;
+      }
+      const gate = state.gates.get(selectionId);
+      if (!gate) {
+        const placeholder = document.createElement('p');
+        placeholder.textContent = 'No component selected';
+        selectionEl.appendChild(placeholder);
+        return;
+      }
+
+      const definition = gateDefinitions[gate.type];
+      const inputs = gate.inputCache || [];
+      const outputs = gate.outputValues || [];
+
+      const title = document.createElement('h3');
+      title.textContent = definition.label;
+      selectionEl.appendChild(title);
+
+      const description = document.createElement('p');
+      description.textContent = definition.description;
+      selectionEl.appendChild(description);
+
+      const stats = document.createElement('dl');
+
+      const inputsTerm = document.createElement('dt');
+      inputsTerm.textContent = 'Inputs';
+      stats.appendChild(inputsTerm);
+      const inputsDesc = document.createElement('dd');
+      inputsDesc.textContent = definition.inputs
+        ? inputs.map((value, index) => `In ${index + 1}: ${value ? '1' : '0'}`).join(', ')
+        : 'None';
+      stats.appendChild(inputsDesc);
+
+      const outputsTerm = document.createElement('dt');
+      outputsTerm.textContent = 'Outputs';
+      stats.appendChild(outputsTerm);
+      const outputsDesc = document.createElement('dd');
+      outputsDesc.textContent = definition.outputs
+        ? outputs.map((value, index) => `Out ${index + 1}: ${value ? '1' : '0'}`).join(', ')
+        : `State: ${gate.state ? '1' : '0'}`;
+      stats.appendChild(outputsDesc);
+
+      const positionTerm = document.createElement('dt');
+      positionTerm.textContent = 'Position';
+      stats.appendChild(positionTerm);
+      const positionDesc = document.createElement('dd');
+      positionDesc.textContent = `${Math.round(gate.x)}, ${Math.round(gate.y)}`;
+      stats.appendChild(positionDesc);
+
+      selectionEl.appendChild(stats);
+
+      if (definition.supportsLabel) {
+        const nameTerm = document.createElement('dt');
+        nameTerm.textContent = 'Name';
+        stats.appendChild(nameTerm);
+        const nameDesc = document.createElement('dd');
+        nameDesc.textContent = gate.label ? gate.label : '—';
+        stats.appendChild(nameDesc);
+      }
+
+      const actionsContainer = document.createElement('div');
+      actionsContainer.className = 'selection-actions';
+
+      const availableActions = Array.isArray(definition.actions) ? definition.actions : [];
+      availableActions.forEach((action) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'as-button';
+        button.textContent = action.label;
+        button.addEventListener('click', () => {
+          runGateAction(gate, action.id);
+        });
+        actionsContainer.appendChild(button);
+      });
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'as-button danger';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => removeGate(gate.id));
+      actionsContainer.appendChild(removeButton);
+
+      selectionEl.appendChild(actionsContainer);
+    };
+
+    const updateGateLabelDisplay = (gate) => {
+      const element = gateElements.get(gate.id);
+      if (!element) {
+        return;
+      }
+      const labelEl = element.querySelector('.gate-label');
+      if (!labelEl) {
+        return;
+      }
+      const text = (gate.label || '').trim();
+      labelEl.textContent = text;
+      labelEl.classList.toggle('is-visible', Boolean(text));
+    };
+
+    const positionContextMenu = (menu, gate, anchorEvent) => {
+      const gateElement = gateElements.get(gate.id);
+      let anchorX;
+      let anchorY;
+      let fallbackRect = null;
+      if (gateElement) {
+        fallbackRect = gateElement.getBoundingClientRect();
+        anchorX = fallbackRect.left + fallbackRect.width / 2;
+        anchorY = fallbackRect.top;
+      }
+      if (anchorEvent && typeof anchorEvent.clientX === 'number' && typeof anchorEvent.clientY === 'number') {
+        anchorX = anchorEvent.clientX;
+        anchorY = anchorEvent.clientY;
+      }
+      anchorX = typeof anchorX === 'number' ? anchorX : window.innerWidth / 2;
+      anchorY = typeof anchorY === 'number' ? anchorY : window.innerHeight / 2;
+
+      requestAnimationFrame(() => {
+        const menuRect = menu.getBoundingClientRect();
+        let left = anchorX - menuRect.width / 2;
+        let top = anchorY - menuRect.height - 12;
+
+        if (fallbackRect && top < 12) {
+          top = fallbackRect.bottom + 12;
+        }
+        left = clamp(left, 12, Math.max(12, window.innerWidth - menuRect.width - 12));
+        top = clamp(top, 12, Math.max(12, window.innerHeight - menuRect.height - 12));
+
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+      });
+    };
+
+    const openContextMenu = (gate, anchorEvent) => {
+      const definition = gateDefinitions[gate.type];
+      if (!definition) {
+        return;
+      }
+      closeContextMenu();
+
+      const menu = document.createElement('div');
+      menu.className = 'gate-context-menu';
+      menu.dataset.gateId = gate.id;
+
+      const heading = document.createElement('h4');
+      heading.textContent = definition.label;
+      menu.appendChild(heading);
+
+      if (definition.supportsLabel) {
+        const field = document.createElement('label');
+        field.className = 'menu-field';
+        const caption = document.createElement('span');
+        caption.textContent = 'Name';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = gate.label || '';
+        input.placeholder = 'Optional label';
+        input.addEventListener('input', () => {
+          gate.label = input.value.slice(0, 32);
+          updateGateLabelDisplay(gate);
+          updateSelectionPanel();
+          markDirty();
+        });
+        field.append(caption, input);
+        menu.appendChild(field);
+
+        requestAnimationFrame(() => {
+          input.focus();
+          input.select();
+        });
+      }
+
+      const actions = Array.isArray(definition.actions) ? definition.actions : [];
+      const actionsContainer = document.createElement('div');
+      actionsContainer.className = 'menu-actions';
+
+      actions.forEach((action) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'as-button';
+        button.textContent = action.label;
+        button.addEventListener('click', () => {
+          runGateAction(gate, action.id);
+          updateSelectionPanel();
+        });
+        actionsContainer.appendChild(button);
+      });
+
+      const removeButton = document.createElement('button');
+      removeButton.type = 'button';
+      removeButton.className = 'as-button danger';
+      removeButton.textContent = 'Remove';
+      removeButton.addEventListener('click', () => {
+        removeGate(gate.id);
+        closeContextMenu();
+      });
+      actionsContainer.appendChild(removeButton);
+
+      menu.appendChild(actionsContainer);
+
+      menu.addEventListener('pointerdown', stopPropagation);
+      menu.addEventListener('contextmenu', (event) => event.preventDefault());
+      document.body.appendChild(menu);
+      contextMenu = { element: menu, gateId: gate.id };
+
+      positionContextMenu(menu, gate, anchorEvent);
+    };
+
+    const handleGlobalPointerDown = (event) => {
+      if (!contextMenu) {
+        return;
+      }
+      if (event.button === 2) {
+        return;
+      }
+      if (contextMenu.element && contextMenu.element.contains(event.target)) {
+        return;
+      }
+      closeContextMenu();
+    };
+
+    const removeGate = (gateId) => {
+      if (!state.gates.has(gateId)) {
+        return;
+      }
+      if (contextMenu && contextMenu.gateId === gateId) {
+        closeContextMenu();
+      }
+      const element = gateElements.get(gateId);
+      if (element) {
+        element.remove();
+      }
+      gateElements.delete(gateId);
+      state.gates.delete(gateId);
+      state.connections = state.connections.filter((connection) =>
+        connection.from.gateId !== gateId && connection.to.gateId !== gateId
+      );
+      if (selectionId === gateId) {
+        selectionId = null;
+      }
+      evaluateCircuit(true);
+      scheduleRender();
+      markDirty();
+    };
+
+    const startDrag = (event, gateId) => {
+      const gate = state.gates.get(gateId);
+      if (!gate) {
+        return;
+      }
+      closeContextMenu();
+      const pointerWorld = screenToWorld(event.clientX, event.clientY);
+      dragInfo = {
+        gateId,
+        offsetX: pointerWorld.x - gate.x,
+        offsetY: pointerWorld.y - gate.y
+      };
+      skipClickAction = false;
+      const element = gateElements.get(gateId);
+      if (element) {
+        element.classList.add('is-dragging');
+      }
+      window.addEventListener('pointermove', handleDragMove);
+      window.addEventListener('pointerup', handleDragEnd, { once: true });
+      window.addEventListener('pointercancel', handleDragEnd, { once: true });
+    };
+
+    const handleDragMove = (event) => {
+      if (!dragInfo) {
+        return;
+      }
+      const gate = state.gates.get(dragInfo.gateId);
+      if (!gate) {
+        return;
+      }
+      const pointerWorld = screenToWorld(event.clientX, event.clientY);
+      gate.x = pointerWorld.x - dragInfo.offsetX;
+      gate.y = pointerWorld.y - dragInfo.offsetY;
+      skipClickAction = true;
+      positionGateElement(gate);
+      renderConnections();
+    };
+
+    const handleDragEnd = () => {
+      if (!dragInfo) {
+        return;
+      }
+      const { gateId } = dragInfo;
+      const element = gateElements.get(gateId);
+      if (element) {
+        element.classList.remove('is-dragging');
+      }
+      const gate = state.gates.get(gateId);
+      if (gate) {
+        gate.x = clamp(snapToGrid(gate.x), 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+        gate.y = clamp(snapToGrid(gate.y), 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+        positionGateElement(gate);
+      }
+      dragInfo = null;
+      window.removeEventListener('pointermove', handleDragMove);
+      renderConnections();
+      markDirty();
+    };
+
+    const removeConnectionTo = (gateId, portIndex) => {
+      const originalLength = state.connections.length;
+      state.connections = state.connections.filter((connection) =>
+        !(connection.to.gateId === gateId && connection.to.portIndex === portIndex)
+      );
+      return state.connections.length !== originalLength;
+    };
+
+    const handlePortClick = (event, gateId) => {
+      event.stopPropagation();
+      closeContextMenu();
+      const port = event.currentTarget;
+      const portIndex = Number(port.dataset.index);
+      const portType = port.dataset.portType;
+
+      if (portType === 'output') {
+        if (pendingConnection && pendingConnection.gateId === gateId && pendingConnection.portIndex === portIndex) {
+          cancelPendingConnection();
+          return;
+        }
+        cancelPendingConnection();
+        pendingConnection = { gateId, portIndex, element: port };
+        port.classList.add('is-active');
+        canvasEl.classList.add('is-connecting');
+        startGhostWire(event);
+        return;
+      }
+
+      if (portType === 'input') {
+        if (!pendingConnection) {
+          const removed = removeConnectionTo(gateId, portIndex);
+          if (removed) {
+            renderConnections();
+            markDirty();
+          }
+          return;
+        }
+        if (pendingConnection.gateId === gateId) {
+          cancelPendingConnection();
+          return;
+        }
+        createConnection(pendingConnection, { gateId, portIndex });
+        cancelPendingConnection();
+        evaluateCircuit(true);
+        scheduleRender();
+        markDirty();
+      }
+    };
+
+    const cancelPendingConnection = () => {
+      if (pendingConnection && pendingConnection.element) {
+        pendingConnection.element.classList.remove('is-active');
+      }
+      pendingConnection = null;
+      canvasEl.classList.remove('is-connecting');
+      removeGhostWire();
+    };
+
+    const clearCircuit = () => {
+      cancelPendingConnection();
+      closeContextMenu();
+      state.gates.clear();
+      gateElements.forEach((element) => element.remove());
+      gateElements.clear();
+      state.connections = [];
+      selectionId = null;
+    };
+
+    const applyCircuitSnapshot = (snapshot = {}, options = {}) => {
+      clearCircuit();
+      const gates = Array.isArray(snapshot.gates) ? snapshot.gates : [];
+      gates.forEach((entry) => restoreGate(entry));
+      const connections = Array.isArray(snapshot.connections) ? snapshot.connections : [];
+      state.connections = connections.map((connection) => ({
+        id: connection.id || createConnectionId(),
+        from: {
+          gateId: connection.from?.gateId,
+          portIndex: Number(connection.from?.portIndex)
+        },
+        to: {
+          gateId: connection.to?.gateId,
+          portIndex: Number(connection.to?.portIndex)
+        }
+      })).filter((connection) =>
+        state.gates.has(connection.from.gateId) &&
+        state.gates.has(connection.to.gateId) &&
+        !Number.isNaN(connection.from.portIndex) &&
+        !Number.isNaN(connection.to.portIndex)
+      );
+
+      const explicitNextId = Number(snapshot.nextId);
+      if (!Number.isNaN(explicitNextId) && explicitNextId > 0) {
+        state.nextId = explicitNextId;
+      } else {
+        recomputeNextId();
+      }
+
+      if (options.evaluate !== false) {
+        evaluateCircuit(false);
+        scheduleRender();
+      }
+    };
+
+    const resetToStarter = async () => {
+      setStatus('Loading...');
+      closeContextMenu();
+      const ok = await loadStarterCircuit({ updateStatus: false, persist: false, showErrors: true });
+      if (!ok) {
+        return;
+      }
+      hasLoadedState = true;
+      if (storageSupported) {
+        const snapshot = getCircuitSnapshot();
+        setStatus('Saving...');
+        persistSnapshot(snapshot);
+        setStatus('Changes saved', { revertDelay: 1200 });
+      } else {
+        setStatus('Ready');
+      }
+    };
+
+    const createConnection = (from, to) => {
+      removeConnectionTo(to.gateId, to.portIndex);
+      const connection = {
+        id: createConnectionId(),
+        from: { gateId: from.gateId, portIndex: from.portIndex },
+        to: { gateId: to.gateId, portIndex: to.portIndex }
+      };
+      state.connections.push(connection);
+      renderConnections();
+    };
+
+    const getPortWorldPosition = (gateId, portIndex, kind) => {
+      const gate = state.gates.get(gateId);
+      if (!gate) {
+        return null;
+      }
+      const definition = gateDefinitions[gate.type];
+      const positions = definition.portLayout?.[kind === 'input' ? 'inputs' : 'outputs'];
+      if (!positions || !positions[portIndex]) {
+        return null;
+      }
+      const coordinates = positions[portIndex];
+      return {
+        x: gate.x + coordinates.x * GATE_SCALE,
+        y: gate.y + coordinates.y * GATE_SCALE
+      };
+    };
+
+    const getInputValue = (gateId, portIndex) => {
+      const connection = state.connections.find((value) =>
+        value.to.gateId === gateId && value.to.portIndex === portIndex
+      );
+      if (!connection) {
+        return 0;
+      }
+      const sourceGate = state.gates.get(connection.from.gateId);
+      if (!sourceGate) {
+        return 0;
+      }
+      return sourceGate.outputValues?.[connection.from.portIndex] ? 1 : 0;
+    };
+
+    const evaluateCircuit = (triggeredByUser = false) => {
+      const iterationLimit = 16;
+      let changed = false;
+
+      for (let iteration = 0; iteration < iterationLimit; iteration += 1) {
+        changed = false;
+        state.gates.forEach((gate) => {
+          const definition = gateDefinitions[gate.type];
+          const inputs = new Array(definition.inputs).fill(0).map((_, index) => getInputValue(gate.id, index));
+          const previousOutputs = gate.outputValues.slice();
+          gate.inputCache = inputs;
+          const produced = typeof definition.logic === 'function' ? definition.logic(inputs, gate) || [] : [];
+          if (definition.outputs > 0) {
+            gate.outputValues = produced.map((value) => (value ? 1 : 0));
+          }
+          if (definition.allowToggle && definition.outputs === 0) {
+            gate.outputValues = [gate.state ? 1 : 0];
+          }
+          if (definition.outputs > 0 && !arraysEqual(previousOutputs, gate.outputValues)) {
+            changed = true;
+          }
+        });
+        if (!changed) {
+          break;
+        }
+      }
+
+      state.gates.forEach((gate) => updateGateElementState(gate));
+      if (triggeredByUser) {
+        renderConnections();
+      }
+    };
+
+    const arraysEqual = (a, b) => {
+      if (a.length !== b.length) {
+        return false;
+      }
+      for (let i = 0; i < a.length; i += 1) {
+        if (a[i] !== b[i]) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const updateGateElementState = (gate) => {
+      const element = gateElements.get(gate.id);
+      if (!element) {
+        return;
+      }
+      const definition = gateDefinitions[gate.type];
+      const isHigh = definition.outputs ? gate.outputValues.some(Boolean) : Boolean(gate.state);
+      element.classList.toggle('is-high', isHigh);
+      element.style.setProperty('--gate-color', isHigh ? 'var(--logic-gate-active)' : 'var(--logic-gate-base)');
+
+      element.querySelectorAll('.port.output').forEach((port) => {
+        const index = Number(port.dataset.index);
+        const value = gate.outputValues[index] ? 1 : 0;
+        port.classList.toggle('is-active', Boolean(value));
+      });
+
+      element.querySelectorAll('.port.input').forEach((port) => {
+        const index = Number(port.dataset.index);
+        const value = gate.inputCache?.[index] ? 1 : 0;
+        port.classList.toggle('is-active', Boolean(value));
+      });
+
+      updateGateLabelDisplay(gate);
+    };
+
+    const renderConnections = () => {
+      wireLayer.querySelectorAll('[data-wire-type="connection"]').forEach((node) => node.remove());
+      state.connections.forEach((connection) => {
+        const from = getPortWorldPosition(connection.from.gateId, connection.from.portIndex, 'output');
+        const to = getPortWorldPosition(connection.to.gateId, connection.to.portIndex, 'input');
+        if (!from || !to) {
+          return;
+        }
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', buildWirePath(from, to));
+        const sourceGate = state.gates.get(connection.from.gateId);
+        const isActive = sourceGate?.outputValues?.[connection.from.portIndex] === 1;
+        path.setAttribute('class', `wire${isActive ? ' is-active' : ''}`);
+        path.setAttribute('vector-effect', 'non-scaling-stroke');
+        path.dataset.wireType = 'connection';
+        wireLayer.appendChild(path);
+      });
+    };
+
+    const buildWirePath = (from, to) => {
+      const offset = Math.max(60, Math.abs(to.x - from.x) / 2);
+      return `M ${from.x} ${from.y} C ${from.x + offset} ${from.y}, ${to.x - offset} ${to.y}, ${to.x} ${to.y}`;
+    };
+
+    const updateGhostWireFromPoint = (clientX, clientY) => {
+      if (!ghostWire || !pendingConnection || typeof clientX !== 'number' || typeof clientY !== 'number') {
+        return;
+      }
+      const from = getPortWorldPosition(pendingConnection.gateId, pendingConnection.portIndex, 'output');
+      if (!from) {
+        removeGhostWire();
+        return;
+      }
+      const pointerWorld = screenToWorld(clientX, clientY);
+      ghostWire.setAttribute('d', buildWirePath(from, pointerWorld));
+    };
+
+    const handleGhostPointerMove = (event) => {
+      updateGhostWireFromPoint(event.clientX, event.clientY);
+    };
+
+    const startGhostWire = (event) => {
+      removeGhostWire();
+      ghostWire = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      ghostWire.setAttribute('class', 'wire wire-ghost');
+      ghostWire.setAttribute('vector-effect', 'non-scaling-stroke');
+      ghostWire.dataset.wireType = 'ghost';
+      wireLayer.appendChild(ghostWire);
+      window.addEventListener('pointermove', handleGhostPointerMove);
+      const hasPointerCoordinates = Boolean(
+        event &&
+        typeof event.clientX === 'number' &&
+        typeof event.clientY === 'number' &&
+        !(event.type === 'click' && event.detail === 0)
+      );
+      if (hasPointerCoordinates) {
+        updateGhostWireFromPoint(event.clientX, event.clientY);
+      }
+    };
+
+    const removeGhostWire = () => {
+      if (ghostWire) {
+        ghostWire.remove();
+        ghostWire = null;
+      }
+      window.removeEventListener('pointermove', handleGhostPointerMove);
+    };
+
+    const handleCanvasDrop = (event) => {
+      event.preventDefault();
+      closeContextMenu();
+      const type = event.dataTransfer.getData('application/x-logic-gate') || event.dataTransfer.getData('text/plain');
+      if (!gateDefinitions[type]) {
+        return;
+      }
+      const pointerWorld = screenToWorld(event.clientX, event.clientY);
+      addGate(type, pointerWorld.x, pointerWorld.y, { coordinates: 'world' });
+    };
+
+    const handleCanvasClick = (event) => {
+      closeContextMenu();
+      if (event.target === canvasEl) {
+        selectGate(null);
+        cancelPendingConnection();
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      const active = document.activeElement;
+      if (contextMenu && contextMenu.element && contextMenu.element.contains(active)) {
+        if (event.key === 'Escape') {
+          closeContextMenu();
+          return;
+        }
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          return;
+        }
+      }
+
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+          return;
+        }
+      }
+
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectionId) {
+        event.preventDefault();
+        removeGate(selectionId);
+        return;
+      }
+      if (event.key === 'Escape') {
+        cancelPendingConnection();
+        closeContextMenu();
+      }
+    };
+
+    const handlePanPointerDown = (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      if (event.target.closest('.gate') || event.target.closest('.port')) {
+        return;
+      }
+      event.preventDefault();
+      canvasWrapper.setPointerCapture(event.pointerId);
+      closeContextMenu();
+      panInfo = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        offsetX: view.offsetX,
+        offsetY: view.offsetY
+      };
+    };
+
+    const handlePanPointerMove = (event) => {
+      if (!panInfo || event.pointerId !== panInfo.pointerId) {
+        return;
+      }
+      view.offsetX = panInfo.offsetX + (event.clientX - panInfo.startX);
+      view.offsetY = panInfo.offsetY + (event.clientY - panInfo.startY);
+      applyViewTransform();
+      updateGhostWireFromPoint(event.clientX, event.clientY);
+    };
+
+    const handlePanPointerUp = (event) => {
+      if (!panInfo || event.pointerId !== panInfo.pointerId) {
+        return;
+      }
+      canvasWrapper.releasePointerCapture(event.pointerId);
+      panInfo = null;
+    };
+
+    const handleWheel = (event) => {
+      if (!event.ctrlKey) {
+        event.preventDefault();
+      }
+      event.preventDefault();
+      closeContextMenu();
+      const { clientX, clientY } = event;
+      const focusWorld = screenToWorld(clientX, clientY);
+      const scaleFactor = event.deltaY < 0 ? 1.1 : 0.9;
+      const nextScale = clamp(view.scale * scaleFactor, MIN_SCALE, MAX_SCALE);
+      if (nextScale === view.scale) {
+        return;
+      }
+      view.scale = nextScale;
+      const rect = canvasWrapper.getBoundingClientRect();
+      view.offsetX = clientX - rect.left - focusWorld.x * view.scale;
+      view.offsetY = clientY - rect.top - focusWorld.y * view.scale;
+      applyViewTransform();
+      updateGhostWireFromPoint(clientX, clientY);
+    };
+
+    await loadGateConfig();
+    buildPalette();
+    updateWrapperSize();
+
+    canvasEl.addEventListener('dragover', (event) => event.preventDefault());
+    canvasEl.addEventListener('drop', handleCanvasDrop);
+    canvasEl.addEventListener('click', handleCanvasClick);
+    document.addEventListener('keydown', handleKeyDown);
+
+    canvasWrapper.addEventListener('pointerdown', handlePanPointerDown);
+    canvasWrapper.addEventListener('pointermove', handlePanPointerMove);
+    canvasWrapper.addEventListener('pointerup', handlePanPointerUp);
+    canvasWrapper.addEventListener('pointercancel', handlePanPointerUp);
+    canvasWrapper.addEventListener('wheel', handleWheel, { passive: false });
+
+    window.addEventListener('resize', () => {
+      closeContextMenu();
+      updateWrapperSize();
+    });
+    document.addEventListener('pointerdown', handleGlobalPointerDown, true);
+
+    if (clearButton) {
+      clearButton.addEventListener('click', () => {
+        resetToStarter();
+      });
+    }
+
+    await loadState();
+    if (!hasLoadedState) {
+      hasLoadedState = true;
+    }
+    scheduleRender();
+
+    window.logicSim = {
+      exportToVhdl: () => exportCircuitToVhdl(),
+      snapshot: () => getCircuitSnapshot(),
+      resetToStarter: () => resetToStarter()
+    };
+
+    window.addEventListener('message', (event) => {
+      if (event?.data?.type === 'logic-sim:export-vhdl') {
+        exportCircuitToVhdl();
+      }
+    });
+
+    window.addEventListener('logic-sim:export-vhdl', () => {
+      exportCircuitToVhdl();
+    });
+  });
+})();

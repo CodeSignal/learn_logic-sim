@@ -1,0 +1,348 @@
+.bespoke .content-area {
+  padding: var(--bespoke-space-sm);
+}
+
+.logic-sim {
+  --logic-grid-line: color-mix(in srgb, var(--bespoke-stroke) 45%, transparent);
+  --logic-highlight: var(--bespoke-accent);
+  --gate-size: 64px;
+  --port-size: 8px;
+  --logic-gate-base: #000000;
+  --logic-gate-active: var(--logic-highlight);
+}
+
+@media (prefers-color-scheme: dark) {
+  .logic-sim {
+    --logic-gate-base: #ffffff;
+  }
+}
+
+.logic-sim .header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--bespoke-space-sm);
+}
+
+.logic-sim .palette-card,
+.logic-sim .inspector-card,
+.logic-sim .canvas-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bespoke-space-md);
+}
+
+.logic-sim .palette-intro {
+  margin: 0;
+  font-size: var(--bespoke-font-size-sm);
+  color: var(--bespoke-muted);
+}
+
+.logic-sim .palette-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--bespoke-space-sm);
+}
+
+.logic-sim .palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--bespoke-space-sm);
+  padding: var(--bespoke-space-sm);
+  border: 1px solid var(--bespoke-stroke);
+  border-radius: var(--bespoke-radius-md);
+  background: var(--bespoke-box);
+  box-shadow: var(--bespoke-shadow-sm);
+  cursor: grab;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  text-align: left;
+}
+
+.logic-sim .palette-item:focus-visible {
+  outline: 2px solid var(--bespoke-control-focus);
+  outline-offset: 2px;
+}
+
+.logic-sim .palette-item:hover {
+  box-shadow: var(--bespoke-shadow-md);
+  transform: translateY(-2px);
+}
+
+.logic-sim .palette-item:active {
+  cursor: grabbing;
+}
+
+.logic-sim .palette-label {
+  font-weight: var(--bespoke-font-weight-medium);
+}
+
+.logic-sim .palette-icon {
+  width: 48px;
+  height: 48px;
+  background-color: var(--logic-gate-base);
+  mask-image: var(--gate-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: var(--gate-icon);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  flex-shrink: 0;
+}
+
+.logic-sim .selection-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bespoke-space-sm);
+  font-size: var(--bespoke-font-size-sm);
+}
+
+.logic-sim .selection-details h3 {
+  margin: 0;
+  font-size: var(--bespoke-font-size-base);
+  font-weight: var(--bespoke-font-weight-semibold);
+}
+
+.logic-sim .selection-details dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--bespoke-space-xs) var(--bespoke-space-sm);
+  margin: 0;
+}
+
+.logic-sim .selection-details dt {
+  color: var(--bespoke-muted);
+}
+
+.logic-sim .selection-details button {
+  align-self: flex-start;
+}
+
+.logic-sim .selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bespoke-space-sm);
+}
+
+.logic-sim .canvas-card {
+  padding: var(--bespoke-card-padding-lg);
+}
+
+.logic-sim .canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--bespoke-space-sm);
+  font-size: var(--bespoke-font-size-sm);
+  color: var(--bespoke-muted);
+}
+
+.logic-sim .canvas-wrapper {
+  position: relative;
+  min-height: calc(var(--bespoke-space-2xl) * 20);
+  background: var(--bespoke-canvas);
+  border: 1px solid var(--bespoke-stroke);
+  border-radius: var(--bespoke-radius-xl);
+  box-shadow: var(--bespoke-shadow-md);
+  overflow: hidden;
+}
+
+.logic-sim .board {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  background-image: linear-gradient(
+      to right,
+      var(--logic-grid-line) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      var(--logic-grid-line) 1px,
+      transparent 1px
+    );
+  background-size: calc(var(--bespoke-space-2xl) * 0.5) calc(var(--bespoke-space-2xl) * 0.5);
+  outline: none;
+}
+
+.logic-sim .board:focus-visible {
+  outline: 2px solid var(--bespoke-control-focus);
+  outline-offset: 2px;
+}
+
+.logic-sim .board.is-connecting {
+  cursor: crosshair;
+}
+
+.logic-sim .wire-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.logic-sim .wire {
+  fill: none;
+  stroke: color-mix(in srgb, var(--logic-gate-base) 40%, transparent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke 0.12s ease, stroke-width 0.12s ease;
+}
+
+.logic-sim .wire.is-active {
+  stroke: var(--logic-highlight);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--logic-highlight) 60%, transparent));
+}
+
+.logic-sim .wire.wire-ghost {
+  stroke: var(--logic-highlight);
+  stroke-width: 3;
+  stroke-dasharray: 6 6;
+  filter: none;
+}
+
+.logic-sim .gate {
+  position: absolute;
+  width: var(--gate-size);
+  height: var(--gate-size);
+  padding: 0;
+  border: none;
+  border-radius: var(--bespoke-radius-md);
+  background: transparent;
+  cursor: grab;
+  user-select: none;
+  transition: box-shadow 0.12s ease, transform 0.12s ease;
+  --gate-color: var(--logic-gate-base);
+}
+
+.logic-sim .gate-icon {
+  width: 100%;
+  height: 100%;
+  background-color: var(--gate-color);
+  mask-image: var(--gate-icon);
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: var(--gate-icon);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  pointer-events: none;
+}
+
+.logic-sim .gate.is-selected {
+  box-shadow: 0 0 0 2px var(--logic-highlight);
+}
+
+.logic-sim .gate.is-dragging {
+  cursor: grabbing;
+  box-shadow: 0 10px 20px -10px rgba(15, 23, 42, 0.6);
+}
+
+.logic-sim .gate-label {
+  position: absolute;
+  left: 50%;
+  top: calc(60% + var(--bespoke-space-xs));
+  transform: translateX(-50%);
+  padding: 0 var(--bespoke-space-sm);
+  border-radius: var(--bespoke-radius-md);
+  background: color-mix(in srgb, var(--bespoke-box) 80%, transparent);
+  color: var(--bespoke-muted);
+  font-size: var(--bespoke-font-size-xs);
+  font-weight: var(--bespoke-font-weight-medium);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+
+.logic-sim .gate-label.is-visible {
+  opacity: 1;
+}
+
+.logic-sim .port {
+  position: absolute;
+  width: var(--port-size);
+  height: var(--port-size);
+  margin: 0;
+  padding: 0;
+  border-radius: 0px;
+  border: 2px solid var(--bespoke-control-border);
+  background: var(--bespoke-control-bg);
+  cursor: crosshair;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.logic-sim .port:hover {
+  border-color: var(--logic-highlight);
+}
+
+.logic-sim .port.is-active {
+  background: var(--logic-highlight);
+  border-color: var(--logic-highlight);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--logic-highlight) 30%, transparent);
+}
+
+.gate-context-menu {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  padding: var(--bespoke-space-sm);
+  border-radius: var(--bespoke-radius-md);
+  background: var(--bespoke-box);
+  border: 1px solid var(--bespoke-stroke);
+  box-shadow: var(--bespoke-shadow-md);
+  z-index: var(--bespoke-z-popover);
+  min-width: 220px;
+}
+
+.gate-context-menu h4 {
+  margin: 0;
+  text-align: center;
+  font-size: var(--bespoke-font-size-sm);
+  font-weight: var(--bespoke-font-weight-semibold);
+}
+
+.gate-context-menu .menu-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bespoke-space-xs);
+  font-size: var(--bespoke-font-size-sm);
+}
+
+.gate-context-menu .menu-field span {
+  color: var(--bespoke-muted);
+}
+
+.gate-context-menu .menu-field input {
+  padding: var(--bespoke-space-xs) var(--bespoke-space-sm);
+  border: 1px solid var(--bespoke-control-border);
+  border-radius: var(--bespoke-radius-md);
+  background: var(--bespoke-control-bg);
+  color: var(--bespoke-fg);
+}
+
+.gate-context-menu .menu-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bespoke-space-sm);
+  align-self: center;
+}
+
+
+@media (max-width: 960px) {
+  .main-layout.logic-sim {
+    flex-direction: column;
+  }
+
+  .logic-sim .palette-list {
+    grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  }
+
+}

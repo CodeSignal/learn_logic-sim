@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Logic Circuit Lab</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./bespoke.css" />
+  <link rel="stylesheet" href="./logic-sim.css" />
+</head>
+<body class="bespoke">
+  <header class="header">
+    <h1>Logic Circuit Lab</h1>
+    <nav class="header-actions" aria-label="Circuit actions"></nav>
+    <div class="spacer"></div>
+    <div id="status" class="status">Ready</div>
+    <button id="btn-help" class="as-button ghost">Help</button>
+  </header>
+
+  <main class="main-layout logic-sim">
+    <aside class="sidebar">
+      <section class="card palette-card">
+        <h2>Circuit Elements</h2>
+        <p class="palette-intro">Drag components onto the canvas or click to add them.</p>
+        <div id="palette" class="palette-list" aria-label="Available gates"></div>
+      </section>
+      <section class="card inspector-card">
+        <h2>Selection</h2>
+        <div id="selection-details" class="selection-details">
+          <p>No component selected</p>
+        </div>
+      </section>
+    </aside>
+
+    <div class="content-area">
+      <section class="card canvas-card">
+        <header class="canvas-toolbar">
+          <p class="canvas-instructions">Connect outputs to inputs to build circuits. Toggle inputs to test behavior.</p>
+          <div class="spacer"></div>
+          <button id="btn-clear-canvas" class="as-button ghost" type="button">Reset</button>
+        </header>
+        <div class="canvas-wrapper">
+          <svg id="wire-layer" class="wire-layer" role="presentation" aria-hidden="true"></svg>
+          <div id="canvas" class="board" role="application" aria-label="Logic circuit canvas" tabindex="0"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="./help-modal.js"></script>
+  <script src="./app.js"></script>
+  <script src="./gate-registry.js"></script>
+  <script src="./logic-sim.js"></script>
+</body>
+</html>

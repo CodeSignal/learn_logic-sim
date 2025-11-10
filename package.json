@@ -1,0 +1,16 @@
+{
+  "name": "logic-circuit-lab",
+  "version": "0.0.1",
+  "description": "Embeddable Bespoke-powered logic circuit playground with VHDL exports",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["logic", "circuit", "playground", "bespoke", "vhdl"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.14.2"
+  }
+}

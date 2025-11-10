@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "nextId": 11,
+  "gates": [
+    {
+      "id": "g1",
+      "type": "and",
+      "x": 3008,
+      "y": 2848,
+      "label": "",
+      "state": 0
+    },
+    {
+      "id": "g6",
+      "type": "input",
+      "x": 2880,
+      "y": 2800,
+      "label": "A",
+      "state": 1
+    },
+    {
+      "id": "g7",
+      "type": "input",
+      "x": 2880,
+      "y": 2896,
+      "label": "B",
+      "state": 0
+    },
+    {
+      "id": "g8",
+      "type": "output",
+      "x": 3136,
+      "y": 2848,
+      "label": "Test",
+      "state": 0
+    }
+  ],
+  "connections": [
+    {
+      "id": "cmhm63wgts4zi",
+      "from": { "gateId": "g6", "portIndex": 0 },
+      "to": { "gateId": "g1", "portIndex": 0 }
+    },
+    {
+      "id": "cmhm63xtqzdqc",
+      "from": { "gateId": "g7", "portIndex": 0 },
+      "to": { "gateId": "g1", "portIndex": 1 }
+    },
+    {
+      "id": "cmhm63zqffhpw",
+      "from": { "gateId": "g1", "portIndex": 0 },
+      "to": { "gateId": "g8", "portIndex": 0 }
+    }
+  ]
+}

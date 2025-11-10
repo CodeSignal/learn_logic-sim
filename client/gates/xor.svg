@@ -1,0 +1,15 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <g stroke="black" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- inputs from left border -->
+    <line x1="0" y1="24" x2="16" y2="24"/>
+    <line x1="0" y1="40" x2="16" y2="40"/>
+    <!-- XOR body -->
+    <path d="M24 16 C44 16, 52 24, 52 32 C52 40, 44 48, 24 48"/>
+    <path d="M16 16 C20 24, 20 40, 16 48"/>
+    <path d="M20 16 C24 24, 24 40, 20 48"/>
+    <path d="M16 16 L24 16"/>
+    <path d="M16 48 L24 48"/>
+    <!-- output to right border -->
+    <line x1="52" y1="32" x2="64" y2="32"/>
+  </g>
+</svg>

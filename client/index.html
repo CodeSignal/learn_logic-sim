@@ -53,5 +53,27 @@
   <script src="./app.js"></script>
   <script src="./gate-registry.js"></script>
   <script src="./logic-sim.js"></script>
+  <script>
+    // WebSocket connection for receiving server messages
+    const ws = new WebSocket(`ws://${window.location.host}`);
+    
+    ws.addEventListener('message', (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'logic-sim:export-vhdl') {
+          // Trigger export via the exposed API
+          if (window.logicSim && typeof window.logicSim.exportToVhdl === 'function') {
+            window.logicSim.exportToVhdl();
+          }
+        }
+      } catch (error) {
+        console.error('Failed to parse WebSocket message:', error);
+      }
+    });
+    
+    ws.addEventListener('error', (error) => {
+      console.error('WebSocket error:', error);
+    });
+  </script>
 </body>
 </html>

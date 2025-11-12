@@ -88,7 +88,6 @@ Logic Circuit Lab is a browser-based playground for sketching, simulating, and e
    to `POST /vhdl/export`.
 3. The server writes `user.vhdl` and `state.json` at the repo root, then runs `circuit-report.printCircuitReport()` to log counts, positions, connection issues, and (optionally) a truth table. Report sections are toggled via `gate-config.json > exportReport`.
 4. If the request fails, the client shows `Save failed (will retry)` and automatically retries after 3 s.
-5. `client/starter.vhdl` demonstrates the output format; overwrite it once you have a real export.
 
 ---
 

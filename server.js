@@ -21,6 +21,7 @@ const PORT = 3000;
 const USER_VHDL_PATH = path.join(__dirname, 'user.vhdl');
 const STATE_JSON_PATH = path.join(__dirname, 'state.json');
 const GATE_CONFIG_PATH = path.join(__dirname, 'client', 'gate-config.json');
+const INITIAL_STATE_PATH = path.join(__dirname, 'client', 'initial_state.json');
 
 // Track connected WebSocket clients
 const wsClients = new Set();
@@ -173,6 +174,20 @@ function handlePostRequest(req, res) {
   }
 }
 
+async function refreshInitialStateFromExport() {
+  try {
+    const stateContents = await fsp.readFile(STATE_JSON_PATH, 'utf8');
+    await fsp.writeFile(INITIAL_STATE_PATH, stateContents, 'utf8');
+    console.log('client/initial_state.json refreshed from state.json');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      console.warn('state.json not found; skipping initial_state.json refresh');
+    } else {
+      console.error('Failed to copy state.json to client/initial_state.json:', error);
+    }
+  }
+}
+
 // Create HTTP server
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
@@ -181,6 +196,24 @@ const server = http.createServer((req, res) => {
   // Handle POST requests
   if (req.method === 'POST') {
     handlePostRequest(req, res);
+    return;
+  }
+  
+  // Handle GET trigger for export
+  if (pathname === '/vhdl/trigger-export') {
+    if (isWebSocketAvailable && wsClients.size > 0) {
+      wsClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({ type: 'logic-sim:export-vhdl' }));
+        }
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true, 
+        message: 'Export triggered via WebSocket',
+        clientCount: wsClients.size 
+      }));
+    }
     return;
   }
 
@@ -233,16 +266,23 @@ if (isWebSocketAvailable) {
   });
 }
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-  if (isWebSocketAvailable) {
-    console.log(`WebSocket server running on the same port`);
-  } else {
-    console.log(`WebSocket functionality disabled - install 'ws' package to enable`);
-  }
-  console.log(`Serving files from: ${__dirname}`);
-  console.log('Press Ctrl+C to stop the server');
+async function startServer() {
+  await refreshInitialStateFromExport();
+  server.listen(PORT, () => {
+    console.log(`Server running at http://localhost:${PORT}`);
+    if (isWebSocketAvailable) {
+      console.log(`WebSocket server running on the same port`);
+    } else {
+      console.log(`WebSocket functionality disabled - install 'ws' package to enable`);
+    }
+    console.log(`Serving files from: ${__dirname}`);
+    console.log('Press Ctrl+C to stop the server');
+  });
+}
+
+startServer().catch((error) => {
+  console.error('Failed to start server:', error);
+  process.exit(1);
 });
 
 // Handle server errors

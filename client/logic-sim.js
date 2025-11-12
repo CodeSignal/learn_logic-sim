@@ -11,6 +11,19 @@
   const RETRY_DELAY = 3000;
   const GATE_SCALE = 1;
   const GATE_PIXEL_SIZE = BASE_ICON_SIZE * GATE_SCALE;
+  const HALF_WORKSPACE = WORKSPACE_SIZE / 2;
+  const WORLD_MIN_X = -HALF_WORKSPACE;
+  const WORLD_MAX_X = HALF_WORKSPACE - GATE_PIXEL_SIZE;
+  const WORLD_MIN_Y = -HALF_WORKSPACE;
+  const WORLD_MAX_Y = HALF_WORKSPACE - GATE_PIXEL_SIZE;
+  const COORDINATE_VERSION = 2;
+
+  const worldToCanvas = (value) => value + HALF_WORKSPACE;
+  const canvasToWorld = (value) => value - HALF_WORKSPACE;
+  const worldPointToCanvas = (point) => ({
+    x: worldToCanvas(point.x),
+    y: worldToCanvas(point.y)
+  });
 
   const snapToGrid = (value) => Math.round(value / GRID_SIZE) * GRID_SIZE;
 
@@ -61,6 +74,7 @@
     };
 
     let paletteOrder = defaultPaletteOrder.slice();
+    let viewCenterOverride = null;
 
     const state = {
       gates: new Map(),
@@ -126,6 +140,18 @@
           view.scale = clampedZoom;
           applyViewTransform();
         }
+        const centerCandidate = data?.defaultCenter;
+        const hasObjectCenter = centerCandidate && typeof centerCandidate === 'object';
+        const objectCenterX = hasObjectCenter ? Number(centerCandidate.x) : null;
+        const objectCenterY = hasObjectCenter ? Number(centerCandidate.y) : null;
+        if (hasObjectCenter && Number.isFinite(objectCenterX) && Number.isFinite(objectCenterY)) {
+          viewCenterOverride = clampWorldPoint({ x: objectCenterX, y: objectCenterY });
+        } else if (Number.isFinite(Number(data?.defaultCenterX)) && Number.isFinite(Number(data?.defaultCenterY))) {
+          viewCenterOverride = clampWorldPoint({
+            x: Number(data.defaultCenterX),
+            y: Number(data.defaultCenterY)
+          });
+        }
       } catch (error) {
         console.warn('Failed to load gate-config.json:', error);
       }
@@ -136,6 +162,20 @@
         ? (typeof input.snapshot === 'object' ? input.snapshot : input)
         : {};
 
+      const declaredOrigin = typeof payload.origin === 'string' ? payload.origin.toLowerCase() : null;
+      const version = Number(payload.version) || 1;
+      const originMode = declaredOrigin === 'center'
+        ? 'center'
+        : (declaredOrigin === 'top-left' ? 'top-left' : (version >= COORDINATE_VERSION ? 'center' : 'top-left'));
+
+      const convertCoordinate = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) {
+          return 0;
+        }
+        return originMode === 'center' ? numeric : numeric - HALF_WORKSPACE;
+      };
+
       const gatesSource = Array.isArray(payload.gates)
         ? payload.gates
         : (Array.isArray(payload.positions) ? payload.positions : []);
@@ -143,8 +183,8 @@
       const gates = gatesSource.map((entry) => ({
         id: entry.id,
         type: entry.type,
-        x: Number(entry.x) || 0,
-        y: Number(entry.y) || 0,
+        x: convertCoordinate(entry.x),
+        y: convertCoordinate(entry.y),
         label: typeof entry.label === 'string' ? entry.label : '',
         state: Number(entry.state) === 1 ? 1 : 0
       }));
@@ -156,7 +196,7 @@
 
       const connections = Array.isArray(payload.connections)
         ? payload.connections.map((connection) => ({
-            id: connection.id,
+            id: connection.id ?? Math.random().toString(36).slice(2, 15),
             from: {
               gateId: connection.from?.gateId,
               portIndex: normalizePortIndex(connection.from?.portIndex)
@@ -171,7 +211,8 @@
       const nextId = Number(payload.nextId);
 
       return {
-        version: Number(payload.version) || 1,
+        version,
+        origin: 'center',
         nextId: Number.isFinite(nextId) && nextId > 0 ? nextId : undefined,
         gates,
         connections
@@ -191,8 +232,9 @@
         view.offsetY = rect.height / 2 - (WORKSPACE_SIZE * view.scale) / 2;
       } else {
         const centerWorld = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
-        view.offsetX = rect.width / 2 - centerWorld.x * view.scale;
-        view.offsetY = rect.height / 2 - centerWorld.y * view.scale;
+        const centerCanvas = worldPointToCanvas(centerWorld);
+        view.offsetX = rect.width / 2 - centerCanvas.x * view.scale;
+        view.offsetY = rect.height / 2 - centerCanvas.y * view.scale;
       }
       applyViewTransform();
       lastWrapperSize = { width: rect.width, height: rect.height };
@@ -200,18 +242,80 @@
 
     const screenToWorld = (clientX, clientY) => {
       const rect = canvasWrapper.getBoundingClientRect();
+      const canvasX = (clientX - rect.left - view.offsetX) / view.scale;
+      const canvasY = (clientY - rect.top - view.offsetY) / view.scale;
       return {
-        x: (clientX - rect.left - view.offsetX) / view.scale,
-        y: (clientY - rect.top - view.offsetY) / view.scale
+        x: canvasToWorld(canvasX),
+        y: canvasToWorld(canvasY)
       };
     };
 
     const worldToScreen = (worldX, worldY) => {
       const rect = canvasWrapper.getBoundingClientRect();
+      const canvasX = worldToCanvas(worldX);
+      const canvasY = worldToCanvas(worldY);
       return {
-        x: rect.left + view.offsetX + worldX * view.scale,
-        y: rect.top + view.offsetY + worldY * view.scale
+        x: rect.left + view.offsetX + canvasX * view.scale,
+        y: rect.top + view.offsetY + canvasY * view.scale
       };
+    };
+
+    const clampWorldPoint = (point = {}) => ({
+      x: clamp(Number(point.x) || 0, WORLD_MIN_X, WORLD_MAX_X),
+      y: clamp(Number(point.y) || 0, WORLD_MIN_Y, WORLD_MAX_Y)
+    });
+
+    const computeBoundingBoxCenter = (gates = []) => {
+      if (!gates.length) {
+        return { x: 0, y: 0 };
+      }
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      gates.forEach((gate) => {
+        if (typeof gate.x === 'number') {
+          minX = Math.min(minX, gate.x);
+          maxX = Math.max(maxX, gate.x);
+        }
+        if (typeof gate.y === 'number') {
+          minY = Math.min(minY, gate.y);
+          maxY = Math.max(maxY, gate.y);
+        }
+      });
+      if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+        return { x: 0, y: 0 };
+      }
+      return {
+        x: clamp((minX + maxX) / 2, WORLD_MIN_X, WORLD_MAX_X),
+        y: clamp((minY + maxY) / 2, WORLD_MIN_Y, WORLD_MAX_Y)
+      };
+    };
+
+    const centerViewOnWorldPoint = (point = { x: 0, y: 0 }) => {
+      if (!canvasWrapper) {
+        return;
+      }
+      const rect = canvasWrapper.getBoundingClientRect();
+      const target = worldPointToCanvas(clampWorldPoint(point));
+      view.offsetX = rect.width / 2 - target.x * view.scale;
+      view.offsetY = rect.height / 2 - target.y * view.scale;
+      applyViewTransform();
+    };
+
+    const centerViewUsingSnapshot = (snapshot = {}) => {
+      if (!canvasWrapper) {
+        return;
+      }
+      if (viewCenterOverride) {
+        centerViewOnWorldPoint(viewCenterOverride);
+        return;
+      }
+      const gates = Array.isArray(snapshot.gates) && snapshot.gates.length
+        ? snapshot.gates
+        : Array.from(state.gates.values());
+      const center = computeBoundingBoxCenter(gates);
+      centerViewOnWorldPoint(center);
     };
 
     const scheduleRender = () => {
@@ -231,7 +335,8 @@
     };
 
     const getCircuitSnapshot = () => ({
-      version: 1,
+      version: COORDINATE_VERSION,
+      origin: 'center',
       nextId: state.nextId,
       gates: Array.from(state.gates.values()).map((gate) => ({
         id: gate.id,
@@ -537,6 +642,7 @@
         const data = await response.json();
         const snapshot = normalizeSnapshot(data) || { gates: [], connections: [], nextId: 1 };
         applyCircuitSnapshot(snapshot);
+        centerViewUsingSnapshot(snapshot);
         if (persist) {
           persistSnapshot(getCircuitSnapshot());
         }
@@ -546,7 +652,9 @@
         return true;
       } catch (error) {
         console.error('Failed to load initial_state.json:', error);
-        applyCircuitSnapshot({ gates: [], connections: [], nextId: 1 });
+        const fallback = { gates: [], connections: [], nextId: 1 };
+        applyCircuitSnapshot(fallback);
+        centerViewUsingSnapshot(fallback);
         if (showErrors) {
           setStatus('Failed to load data', { revertDelay: 2000 });
         }
@@ -569,6 +677,7 @@
         if (raw) {
           const parsed = JSON.parse(raw);
           applyCircuitSnapshot(parsed);
+          centerViewUsingSnapshot(parsed);
         } else {
           persistSnapshot(getCircuitSnapshot());
         }
@@ -599,8 +708,8 @@
         outputValues: new Array(gateDefinitions[entry.type].outputs).fill(0),
         inputCache: new Array(gateDefinitions[entry.type].inputs).fill(0)
       };
-      gate.x = clamp(gate.x, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
-      gate.y = clamp(gate.y, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+      gate.x = clamp(gate.x, WORLD_MIN_X, WORLD_MAX_X);
+      gate.y = clamp(gate.y, WORLD_MIN_Y, WORLD_MAX_Y);
       state.gates.set(gate.id, gate);
       const element = createGateElement(gate);
       canvasEl.appendChild(element);
@@ -684,8 +793,8 @@
         inputCache: new Array(definition.inputs).fill(0)
       };
 
-      gate.x = clamp(gate.x, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
-      gate.y = clamp(gate.y, 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+      gate.x = clamp(gate.x, WORLD_MIN_X, WORLD_MAX_X);
+      gate.y = clamp(gate.y, WORLD_MIN_Y, WORLD_MAX_Y);
 
       state.gates.set(gate.id, gate);
       const element = createGateElement(gate);
@@ -799,8 +908,8 @@
       if (!element) {
         return;
       }
-      element.style.left = `${gate.x}px`;
-      element.style.top = `${gate.y}px`;
+      element.style.left = `${worldToCanvas(gate.x)}px`;
+      element.style.top = `${worldToCanvas(gate.y)}px`;
     };
 
     const selectGate = (gateId) => {
@@ -1125,8 +1234,8 @@
       }
       const gate = state.gates.get(gateId);
       if (gate) {
-        gate.x = clamp(snapToGrid(gate.x), 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
-        gate.y = clamp(snapToGrid(gate.y), 0, WORKSPACE_SIZE - GATE_PIXEL_SIZE);
+        gate.x = clamp(snapToGrid(gate.x), WORLD_MIN_X, WORLD_MAX_X);
+        gate.y = clamp(snapToGrid(gate.y), WORLD_MIN_Y, WORLD_MAX_Y);
         positionGateElement(gate);
       }
       dragInfo = null;
@@ -1279,8 +1388,8 @@
       }
       const coordinates = positions[portIndex];
       return {
-        x: gate.x + coordinates.x * GATE_SCALE,
-        y: gate.y + coordinates.y * GATE_SCALE
+        x: worldToCanvas(gate.x) + coordinates.x * GATE_SCALE,
+        y: worldToCanvas(gate.y) + coordinates.y * GATE_SCALE
       };
     };
 
@@ -1402,7 +1511,8 @@
         return;
       }
       const pointerWorld = screenToWorld(clientX, clientY);
-      ghostWire.setAttribute('d', buildWirePath(from, pointerWorld));
+      const pointerCanvas = worldPointToCanvas(pointerWorld);
+      ghostWire.setAttribute('d', buildWirePath(from, pointerCanvas));
     };
 
     const handleGhostPointerMove = (event) => {
@@ -1536,8 +1646,9 @@
       }
       view.scale = nextScale;
       const rect = canvasWrapper.getBoundingClientRect();
-      view.offsetX = clientX - rect.left - focusWorld.x * view.scale;
-      view.offsetY = clientY - rect.top - focusWorld.y * view.scale;
+      const focusCanvas = worldPointToCanvas(focusWorld);
+      view.offsetX = clientX - rect.left - focusCanvas.x * view.scale;
+      view.offsetY = clientY - rect.top - focusCanvas.y * view.scale;
       applyViewTransform();
       updateGhostWireFromPoint(clientX, clientY);
     };

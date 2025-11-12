@@ -5,9 +5,16 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "export:task": "node scripts/export-task-state.js"
   },
-  "keywords": ["logic", "circuit", "playground", "bespoke", "vhdl"],
+  "keywords": [
+    "logic",
+    "circuit",
+    "playground",
+    "bespoke",
+    "vhdl"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {

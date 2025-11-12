@@ -168,7 +168,6 @@ export async function loadInitialState() {
 
 ## 8. Reference Assets
 - `client/help-content-template.html` — duplicate sections to document new tools or grading rubrics.
-- `client/starter.vhdl` — sample output; overwrite once exports are validated.
 - `circuit-report.js` — adjust report toggles via `client/gate-config.json`.
 
 Follow this playbook whenever you add new features, help content, or integrations so the Bespoke components remain consistent across every embedded deployment of Logic Circuit Lab.

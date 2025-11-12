@@ -1,5 +1,4 @@
 -- Logic Circuit Lab export
--- Layout metadata lives in initial_state.json
 
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
@@ -15,7 +14,7 @@ architecture behavioral of logic_circuit_lab is
   signal a : STD_LOGIC;
   signal b : STD_LOGIC;
 begin
-  and_g1_0 <= a and b; -- AND
+  and_g1_0 <= (a) and (b); -- AND
   a <= '1'; -- Input A
   b <= '0'; -- Input B
   test <= and_g1_0; -- Output Test

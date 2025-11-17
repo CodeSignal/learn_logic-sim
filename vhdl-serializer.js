@@ -5,6 +5,12 @@ const gateDefinitions = gateRegistry?.definitions || {};
 function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
   const gateMap = new Map((snapshot.gates || []).map((gate) => [gate.id, gate]));
   const connectionLookup = new Map();
+  const customGateLookup = new Map();
+  (snapshot.customGates || []).forEach((entry) => {
+    if (entry?.type) {
+      customGateLookup.set(entry.type, entry);
+    }
+  });
   (snapshot.connections || []).forEach((connection) => {
     if (!connection?.to?.gateId) {
       return;
@@ -49,7 +55,7 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
     if (signalNameMap.has(key)) {
       return signalNameMap.get(key);
     }
-    const definition = gateDefinitions[gate.type];
+    const definition = gateDefinitions[gate.type] || customGateLookup.get(gate.type);
     const typeSlug = sanitizeIdentifier((definition?.label || gate.type), `node_${gate.id}`);
     const labelSlug = (gate.label || '').trim() ? sanitizeIdentifier(gate.label, `${typeSlug}_${gate.id}`) : '';
     const base = labelSlug || `${typeSlug}_${gate.id}_${index}`;
@@ -89,10 +95,16 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
   const outputPorts = [];
 
   (snapshot.gates || []).forEach((gate) => {
-    const definition = gateDefinitions[gate.type];
-    if (!definition) {
+    const registryDefinition = gateDefinitions[gate.type];
+    const customEntry = registryDefinition ? null : customGateLookup.get(gate.type);
+    if (!registryDefinition && !customEntry) {
       return;
     }
+    const definition = registryDefinition || {
+      label: customEntry.label || gate.type,
+      inputs: Array.isArray(customEntry.inputNames) ? customEntry.inputNames.length : 0,
+      outputs: Array.isArray(customEntry.outputNames) ? customEntry.outputNames.length : 0
+    };
 
     if (definition.outputs > 0 && gate.type !== 'output') {
       for (let i = 0; i < definition.outputs; i += 1) {
@@ -115,6 +127,10 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
       const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
       outputAssignments.push(`${portName} <= ${inputSignal || "'0'"};${comment}`);
       return;
+    }
+
+    if (customEntry) {
+      throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
     }
 
     const normalizedInputs = [];

@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "origin": "center",
+  "nextId": 7,
+  "gates": [
+    {
+      "id": "g1",
+      "type": "input",
+      "x": -320,
+      "y": -64,
+      "label": "A",
+      "state": 0
+    },
+    {
+      "id": "g2",
+      "type": "input",
+      "x": -320,
+      "y": 0,
+      "label": "B",
+      "state": 0
+    },
+    {
+      "id": "g3",
+      "type": "input",
+      "x": -320,
+      "y": 64,
+      "label": "C",
+      "state": 0
+    },
+    {
+      "id": "g4",
+      "type": "and",
+      "x": -128,
+      "y": -32,
+      "label": ""
+    },
+    {
+      "id": "g5",
+      "type": "and",
+      "x": 32,
+      "y": -32,
+      "label": ""
+    },
+    {
+      "id": "g6",
+      "type": "output",
+      "x": 224,
+      "y": -32,
+      "label": "OUT"
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": { "gateId": "g1", "portIndex": 0 },
+      "to": { "gateId": "g4", "portIndex": 0 }
+    },
+    {
+      "id": "c2",
+      "from": { "gateId": "g2", "portIndex": 0 },
+      "to": { "gateId": "g4", "portIndex": 1 }
+    },
+    {
+      "id": "c3",
+      "from": { "gateId": "g4", "portIndex": 0 },
+      "to": { "gateId": "g5", "portIndex": 0 }
+    },
+    {
+      "id": "c4",
+      "from": { "gateId": "g3", "portIndex": 0 },
+      "to": { "gateId": "g5", "portIndex": 1 }
+    },
+    {
+      "id": "c5",
+      "from": { "gateId": "g5", "portIndex": 0 },
+      "to": { "gateId": "g6", "portIndex": 0 }
+    }
+  ]
+}

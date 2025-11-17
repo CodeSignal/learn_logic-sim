@@ -60,6 +60,15 @@ Logic Circuit Lab is a browser-based playground for sketching, simulating, and e
 
 ---
 
+## Custom Gates
+- Custom gates are described through `.json` snapshots that match the `state.json` schema (the object returned by `window.logicSim.snapshot()`).
+- Build a circuit with the standard palette, export it via `window.logicSim.snapshot()` (or copy `state.json`), and drop that JSON file into `client/custom-gates/` to turn it into a reusable gate without duplicating its contents.
+- Input and output pins for the custom gate are inferred from the `input` and `output` gates inside the JSON snapshot (their labels become the exposed port names). Simulation treats the custom gate as a black box by running the nested snapshot with the same propagation engine.
+- Snapshots embedded in saved circuits (or discovered under `client/custom-gates/`) automatically appear in the main palette alongside the built-in gates.
+- VHDL exports automatically flatten any custom gates, so you can keep them in your design and still obtain a complete netlist (the written `state.json` mirrors that flattened export).
+
+---
+
 ## Saving, Loading, and Status Messages
 - On first load, `logic-sim.js` fetches `initial_state.json`, applies it to the canvas, and caches it locally.
 - Once the app confirms that `localStorage` works, every mutation is debounced (500 ms) and saved under the key `logic-circuit-lab-state-v1`.

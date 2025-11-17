@@ -22,6 +22,8 @@ const USER_VHDL_PATH = path.join(__dirname, 'user.vhdl');
 const STATE_JSON_PATH = path.join(__dirname, 'state.json');
 const GATE_CONFIG_PATH = path.join(__dirname, 'client', 'gate-config.json');
 const INITIAL_STATE_PATH = path.join(__dirname, 'client', 'initial_state.json');
+const CUSTOM_GATES_DIR = path.join(__dirname, 'client', 'custom-gates');
+const CUSTOM_GATE_EXTENSIONS = new Set(['.json']);
 
 // Track connected WebSocket clients
 const wsClients = new Set();
@@ -44,6 +46,73 @@ const mimeTypes = {
 function getMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return mimeTypes[ext] || 'text/plain';
+}
+
+const slugify = (value = '', fallback = 'custom-gate') => {
+  const cleaned = value
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || fallback;
+};
+
+const deriveAbbreviation = (label = '') => {
+  const cleaned = (label || '').trim();
+  if (!cleaned) {
+    return 'CG';
+  }
+  const letters = cleaned
+    .split(/\s+/)
+    .map((word) => word[0])
+    .join('')
+    .slice(0, 3)
+    .toUpperCase();
+  return letters || cleaned.slice(0, 3).toUpperCase();
+};
+
+async function readFilesystemCustomGates() {
+  await fsp.mkdir(CUSTOM_GATES_DIR, { recursive: true });
+  const entries = await fsp.readdir(CUSTOM_GATES_DIR, { withFileTypes: true });
+  const gates = [];
+  const usedTypes = new Set();
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const ext = path.extname(entry.name).toLowerCase();
+    if (!CUSTOM_GATE_EXTENSIONS.has(ext)) {
+      continue;
+    }
+    const absolutePath = path.join(CUSTOM_GATES_DIR, entry.name);
+    try {
+      const contents = await fsp.readFile(absolutePath, 'utf8');
+      const snapshot = JSON.parse(contents);
+      const snapshotLabel = typeof snapshot.label === 'string'
+        ? snapshot.label
+        : (typeof snapshot.name === 'string' ? snapshot.name : null);
+      const baseName = snapshotLabel || path.basename(entry.name, ext);
+      const baseSlug = slugify(baseName, 'custom-gate');
+      let type = baseSlug;
+      let suffix = 2;
+      while (usedTypes.has(type)) {
+        type = `${baseSlug}-${suffix}`;
+        suffix += 1;
+      }
+      usedTypes.add(type);
+      gates.push({
+        type: `custom-${type}`,
+        label: baseName,
+        fileName: entry.name,
+        abbreviation: deriveAbbreviation(baseName),
+        snapshot
+      });
+    } catch (error) {
+      console.warn(`Failed to parse custom gate "${entry.name}":`, error.message);
+    }
+  }
+  return gates;
 }
 
 async function loadGateConfig() {
@@ -174,6 +243,18 @@ function handlePostRequest(req, res) {
   }
 }
 
+async function handleCustomGateRegistryRequest(res) {
+  try {
+    const gates = await readFilesystemCustomGates();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ gates }));
+  } catch (error) {
+    console.error('Failed to enumerate custom gates:', error);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to enumerate custom gates' }));
+  }
+}
+
 async function refreshInitialStateFromExport() {
   try {
     const stateContents = await fsp.readFile(STATE_JSON_PATH, 'utf8');
@@ -214,6 +295,11 @@ const server = http.createServer((req, res) => {
         clientCount: wsClients.size 
       }));
     }
+    return;
+  }
+
+  if (pathname === '/custom-gates/registry.json') {
+    handleCustomGateRegistryRequest(res);
     return;
   }
 

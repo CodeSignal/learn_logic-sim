@@ -1747,6 +1747,13 @@
       heading.textContent = definition.label;
       menu.appendChild(heading);
 
+      if (definition.description) {
+        const description = document.createElement('p');
+        description.className = 'menu-description';
+        description.textContent = definition.description;
+        menu.appendChild(description);
+      }
+
       if (definition.supportsLabel) {
         const field = document.createElement('label');
         field.className = 'menu-field';

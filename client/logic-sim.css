@@ -24,7 +24,6 @@
 }
 
 .logic-sim .palette-card,
-.logic-sim .inspector-card,
 .logic-sim .canvas-card {
   display: flex;
   flex-direction: column;
@@ -370,6 +369,13 @@
   text-align: center;
   font-size: var(--bespoke-font-size-sm);
   font-weight: var(--bespoke-font-weight-semibold);
+}
+
+.gate-context-menu .menu-description {
+  margin: var(--bespoke-space-xs) 0 var(--bespoke-space-sm);
+  font-size: var(--bespoke-font-size-sm);
+  color: var(--bespoke-muted);
+  text-align: center;
 }
 
 .gate-context-menu .menu-field {

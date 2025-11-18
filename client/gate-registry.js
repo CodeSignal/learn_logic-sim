@@ -53,7 +53,7 @@
     {
       label: 'Input',
       description: 'Manual toggle that emits a high (1) or low (0) signal.',
-      icon: './gates/input.svg',
+      icon: './resources/gates/input.svg',
       inputs: 0,
       outputs: 1,
       allowToggle: true,
@@ -86,7 +86,7 @@
     {
       label: 'Output',
       description: 'Shows the value from a single input line.',
-      icon: './gates/output.svg',
+      icon: './resources/gates/output.svg',
       inputs: 1,
       outputs: 0,
       supportsLabel: true,
@@ -107,7 +107,7 @@
     {
       label: 'Buffer',
       description: 'Passes the input signal through unchanged.',
-      icon: './gates/buffer.svg',
+      icon: './resources/gates/buffer.svg',
       inputs: 1,
       outputs: 1,
       portLayout: {
@@ -124,7 +124,7 @@
     {
       label: 'NOT',
       description: 'Inverts the incoming signal.',
-      icon: './gates/not.svg',
+      icon: './resources/gates/not.svg',
       inputs: 1,
       outputs: 1,
       portLayout: {
@@ -141,7 +141,7 @@
     {
       label: 'AND',
       description: 'Outputs 1 when all inputs are high.',
-      icon: './gates/and.svg',
+      icon: './resources/gates/and.svg',
       inputs: 2,
       outputs: 1,
       portLayout: {
@@ -161,7 +161,7 @@
     {
       label: 'NAND',
       description: 'Outputs 0 only when all inputs are high.',
-      icon: './gates/nand.svg',
+      icon: './resources/gates/nand.svg',
       inputs: 2,
       outputs: 1,
       portLayout: {
@@ -181,7 +181,7 @@
     {
       label: 'OR',
       description: 'Outputs 1 when any input is high.',
-      icon: './gates/or.svg',
+      icon: './resources/gates/or.svg',
       inputs: 2,
       outputs: 1,
       portLayout: {
@@ -201,7 +201,7 @@
     {
       label: 'NOR',
       description: 'Outputs 1 only when all inputs are low.',
-      icon: './gates/nor.svg',
+      icon: './resources/gates/nor.svg',
       inputs: 2,
       outputs: 1,
       portLayout: {
@@ -221,7 +221,7 @@
     {
       label: 'XOR',
       description: 'Outputs 1 when an odd number of inputs are high.',
-      icon: './gates/xor.svg',
+      icon: './resources/gates/xor.svg',
       inputs: 2,
       outputs: 1,
       portLayout: {

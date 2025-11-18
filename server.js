@@ -8,6 +8,7 @@ const { printCircuitReport } = require('./circuit-report');
 // Try to load WebSocket module, fallback if not available
 let WebSocket = null;
 let isWebSocketAvailable = false;
+let wss = null;
 try {
   WebSocket = require('ws');
   isWebSocketAvailable = true;
@@ -269,6 +270,9 @@ async function refreshInitialStateFromExport() {
   }
 }
 
+// Track open HTTP sockets so we can destroy them during shutdown
+const activeHttpSockets = new Set();
+
 // Create HTTP server
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
@@ -332,9 +336,14 @@ const server = http.createServer((req, res) => {
   });
 });
 
+server.on('connection', (socket) => {
+  activeHttpSockets.add(socket);
+  socket.on('close', () => activeHttpSockets.delete(socket));
+});
+
 // Create WebSocket server only if WebSocket is available
 if (isWebSocketAvailable) {
-  const wss = new WebSocket.Server({ server });
+  wss = new WebSocket.Server({ server });
 
   wss.on('connection', (ws) => {
     console.log('New WebSocket client connected');
@@ -381,11 +390,69 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\nShutting down server...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
+let isShuttingDown = false;
+
+function closeHttpServer() {
+  return new Promise((resolve) => {
+    if (!server.listening) {
+      resolve();
+      return;
+    }
+    server.close((error) => {
+      if (error) {
+        console.error('Error closing HTTP server:', error);
+      } else {
+        console.log('HTTP server closed');
+      }
+      resolve();
+    });
+    // Force close any idle sockets so close can resolve promptly
+    activeHttpSockets.forEach((socket) => {
+      socket.destroy();
+    });
   });
+}
+
+function closeWebSocketServer() {
+  return new Promise((resolve) => {
+    if (!wss) {
+      resolve();
+      return;
+    }
+    try {
+      wss.clients.forEach((client) => {
+        try {
+          client.terminate();
+        } catch (error) {
+          console.error('Failed terminating WebSocket client:', error);
+        }
+      });
+      wss.close(() => {
+        console.log('WebSocket server closed');
+        resolve();
+      });
+    } catch (error) {
+      console.error('Error closing WebSocket server:', error);
+      resolve();
+    }
+  });
+}
+
+async function gracefulShutdown(signal = 'SIGINT') {
+  if (isShuttingDown) {
+    return;
+  }
+  isShuttingDown = true;
+  console.log(`\nShutting down server (${signal})...`);
+  try {
+    await Promise.all([closeHttpServer(), closeWebSocketServer()]);
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+}
+
+['SIGINT', 'SIGTERM'].forEach((signal) => {
+  process.on(signal, () => gracefulShutdown(signal));
 });

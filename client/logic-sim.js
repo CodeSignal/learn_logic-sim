@@ -17,6 +17,53 @@
   const WORLD_MIN_Y = -HALF_WORKSPACE;
   const WORLD_MAX_Y = HALF_WORKSPACE - GATE_PIXEL_SIZE;
   const COORDINATE_VERSION = 2;
+  const ROTATION_STEP = 90;
+  const HALF_GATE_SIZE = BASE_ICON_SIZE / 2;
+
+  const normalizeRotation = (value = 0) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    const steps = Math.round(numeric / ROTATION_STEP);
+    const normalized = steps * ROTATION_STEP;
+    const wrapped = ((normalized % 360) + 360) % 360;
+    return wrapped;
+  };
+
+  const getGateRotation = (gate) => normalizeRotation(gate?.rotation || 0);
+
+  const rotatePoint = (point = { x: HALF_GATE_SIZE, y: HALF_GATE_SIZE }, rotation = 0) => {
+    const baseX = Number(point?.x);
+    const baseY = Number(point?.y);
+    const x = Number.isFinite(baseX) ? baseX : HALF_GATE_SIZE;
+    const y = Number.isFinite(baseY) ? baseY : HALF_GATE_SIZE;
+    const offsetX = x - HALF_GATE_SIZE;
+    const offsetY = y - HALF_GATE_SIZE;
+    const quarterTurns = Math.round(normalizeRotation(rotation) / ROTATION_STEP) % 4;
+    let rotatedX = offsetX;
+    let rotatedY = offsetY;
+    switch ((quarterTurns + 4) % 4) {
+      case 1:
+        rotatedX = -offsetY;
+        rotatedY = offsetX;
+        break;
+      case 2:
+        rotatedX = -offsetX;
+        rotatedY = -offsetY;
+        break;
+      case 3:
+        rotatedX = offsetY;
+        rotatedY = -offsetX;
+        break;
+      default:
+        break;
+    }
+    return {
+      x: rotatedX + HALF_GATE_SIZE,
+      y: rotatedY + HALF_GATE_SIZE
+    };
+  };
 
   const slugifyGateName = (value = '', fallback = 'custom-gate') => {
     const cleaned = value
@@ -391,7 +438,8 @@
         x: convertCoordinate(entry.x),
         y: convertCoordinate(entry.y),
         label: typeof entry.label === 'string' ? entry.label : '',
-        state: Number(entry.state) === 1 ? 1 : 0
+        state: Number(entry.state) === 1 ? 1 : 0,
+        rotation: normalizeRotation(entry.rotation)
       }));
 
       const normalizePortIndex = (value) => {
@@ -574,7 +622,8 @@
         x: gate.x,
         y: gate.y,
         state: gate.state ?? 0,
-        label: gate.label || ''
+        label: gate.label || '',
+        rotation: getGateRotation(gate)
       })),
       connections: state.connections.map((connection) => ({
         id: connection.id,
@@ -1104,6 +1153,7 @@
         y: typeof entry.y === 'number' ? entry.y : 0,
         state: Number(entry.state) === 1 ? 1 : 0,
         label: typeof entry.label === 'string' ? entry.label : '',
+        rotation: normalizeRotation(entry.rotation),
         outputValues: new Array(gateDefinitions[entry.type].outputs).fill(0),
         inputCache: new Array(gateDefinitions[entry.type].inputs).fill(0)
       };
@@ -1346,6 +1396,7 @@
         y: snapToGrid(worldPoint.y - GATE_PIXEL_SIZE / 2),
         state: type === 'input' ? 0 : 0,
         label: '',
+        rotation: 0,
         outputValues: new Array(definition.outputs).fill(0),
         inputCache: new Array(definition.inputs).fill(0)
       };
@@ -1416,21 +1467,26 @@
       element.title = definition.label;
       element.style.setProperty('--gate-color', 'var(--logic-gate-base)');
 
+      const surface = document.createElement('div');
+      surface.className = 'gate-surface';
+      element.appendChild(surface);
+
       const visual = definition.renderMode === 'custom-square'
         ? createCustomGateSurface(definition, gate)
         : createGateIcon(definition);
-      element.appendChild(visual);
+      surface.appendChild(visual);
 
       const nameTag = document.createElement('div');
       nameTag.className = 'gate-label';
       element.appendChild(nameTag);
 
       for (let i = 0; i < definition.inputs; i += 1) {
-        element.appendChild(createPort('input', gate.id, i, definition, element));
+        surface.appendChild(createPort('input', gate.id, i, definition, surface));
       }
       for (let i = 0; i < definition.outputs; i += 1) {
-        element.appendChild(createPort('output', gate.id, i, definition, element));
+        surface.appendChild(createPort('output', gate.id, i, definition, surface));
       }
+      surface.style.transform = `rotate(${getGateRotation(gate)}deg)`;
 
       element.addEventListener('click', (event) => {
         if (event.target.closest('.port')) {
@@ -1501,6 +1557,18 @@
       }
       element.style.left = `${worldToCanvas(gate.x)}px`;
       element.style.top = `${worldToCanvas(gate.y)}px`;
+    };
+
+    const applyGateRotation = (gate) => {
+      const element = gateElements.get(gate.id);
+      if (!element) {
+        return;
+      }
+      const surface = element.querySelector('.gate-surface');
+      if (!surface) {
+        return;
+      }
+      surface.style.transform = `rotate(${getGateRotation(gate)}deg)`;
     };
 
     const selectGate = (gateId) => {
@@ -1719,6 +1787,21 @@
         actionsContainer.appendChild(button);
       });
 
+      const rotateButton = document.createElement('button');
+      rotateButton.type = 'button';
+      rotateButton.className = 'as-button icon-button';
+      rotateButton.setAttribute('aria-label', 'Rotate gate clockwise');
+      const rotateIcon = document.createElement('img');
+      rotateIcon.src = './resources/rotate.svg';
+      rotateIcon.alt = '';
+      rotateIcon.setAttribute('aria-hidden', 'true');
+      rotateButton.appendChild(rotateIcon);
+      rotateButton.addEventListener('click', () => {
+        rotateGateClockwise(gate.id);
+        updateSelectionPanel();
+      });
+      actionsContainer.appendChild(rotateButton);
+
       const removeButton = document.createElement('button');
       removeButton.type = 'button';
       removeButton.className = 'as-button danger';
@@ -1773,6 +1856,17 @@
       }
       evaluateCircuit(true);
       scheduleRender();
+      markDirty();
+    };
+
+    const rotateGateClockwise = (gateId) => {
+      const gate = state.gates.get(gateId);
+      if (!gate) {
+        return;
+      }
+      gate.rotation = normalizeRotation(getGateRotation(gate) + ROTATION_STEP);
+      applyGateRotation(gate);
+      renderConnections();
       markDirty();
     };
 
@@ -1978,7 +2072,7 @@
       if (!positions || !positions[portIndex]) {
         return null;
       }
-      const coordinates = positions[portIndex];
+      const coordinates = rotatePoint(positions[portIndex], getGateRotation(gate));
       return {
         x: worldToCanvas(gate.x) + coordinates.x * GATE_SCALE,
         y: worldToCanvas(gate.y) + coordinates.y * GATE_SCALE
@@ -2067,6 +2161,7 @@
       });
 
       updateGateLabelDisplay(gate);
+      applyGateRotation(gate);
     };
 
     const renderConnections = () => {
@@ -2089,8 +2184,20 @@
     };
 
     const buildWirePath = (from, to) => {
-      const offset = Math.max(60, Math.abs(to.x - from.x) / 2);
-      return `M ${from.x} ${from.y} C ${from.x + offset} ${from.y}, ${to.x - offset} ${to.y}, ${to.x} ${to.y}`;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        const direction = dx === 0 ? 1 : Math.sign(dx);
+        const offset = Math.max(40, Math.abs(dx) / 2);
+        const control1X = from.x + offset * direction;
+        const control2X = to.x - offset * direction;
+        return `M ${from.x} ${from.y} C ${control1X} ${from.y}, ${control2X} ${to.y}, ${to.x} ${to.y}`;
+      }
+      const direction = dy === 0 ? 1 : Math.sign(dy);
+      const offset = Math.max(40, Math.abs(dy) / 2);
+      const control1Y = from.y + offset * direction;
+      const control2Y = to.y - offset * direction;
+      return `M ${from.x} ${from.y} C ${from.x} ${control1Y}, ${to.x} ${control2Y}, ${to.x} ${to.y}`;
     };
 
     const updateGhostWireFromPoint = (clientX, clientY) => {

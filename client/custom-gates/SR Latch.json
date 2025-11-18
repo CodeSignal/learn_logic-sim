@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "description": "Cross-coupled NOR latch with S and R inputs and complementary outputs.",
   "origin": "center",
   "nextId": 7,
   "gates": [
@@ -25,7 +26,7 @@
       "x": 256,
       "y": -160,
       "state": 1,
-      "label": ""
+      "label": "Q"
     },
     {
       "id": "g4",
@@ -33,15 +34,7 @@
       "x": 256,
       "y": -64,
       "state": 0,
-      "label": ""
-    },
-    {
-      "id": "g5",
-      "type": "input",
-      "x": -48,
-      "y": -160,
-      "state": 0,
-      "label": ""
+      "label": "notQ"
     },
     {
       "id": "g6",
@@ -49,7 +42,15 @@
       "x": -48,
       "y": -64,
       "state": 0,
-      "label": ""
+      "label": "S"
+    },
+    {
+      "id": "g5",
+      "type": "input",
+      "x": -48,
+      "y": -160,
+      "state": 0,
+      "label": "R"
     }
   ],
   "connections": [

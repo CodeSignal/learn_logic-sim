@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "description": "Outputs 1 only when inputs A, B, and C are all high.",
   "origin": "center",
   "nextId": 7,
   "gates": [

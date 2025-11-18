@@ -362,6 +362,7 @@
   box-shadow: var(--bespoke-shadow-md);
   z-index: var(--bespoke-z-popover);
   min-width: 220px;
+  max-width: 320px;
 }
 
 .gate-context-menu h4 {

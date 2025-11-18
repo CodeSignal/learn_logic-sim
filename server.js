@@ -90,6 +90,9 @@ async function readFilesystemCustomGates() {
     try {
       const contents = await fsp.readFile(absolutePath, 'utf8');
       const snapshot = JSON.parse(contents);
+      const description = typeof snapshot.description === 'string' && snapshot.description.trim()
+        ? snapshot.description.trim()
+        : '';
       const snapshotLabel = typeof snapshot.label === 'string'
         ? snapshot.label
         : (typeof snapshot.name === 'string' ? snapshot.name : null);
@@ -106,6 +109,7 @@ async function readFilesystemCustomGates() {
         type: `custom-${type}`,
         label: baseName,
         fileName: entry.name,
+        description,
         abbreviation: deriveAbbreviation(baseName),
         snapshot
       });

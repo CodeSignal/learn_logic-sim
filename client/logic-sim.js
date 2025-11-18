@@ -341,6 +341,7 @@
       type: entry.type,
       label: entry.label,
       fileName: entry.fileName || '',
+      description: entry.description || '',
       inputNames: entry.inputNames.slice(),
       outputNames: entry.outputNames.slice(),
       abbreviation: entry.abbreviation,
@@ -1250,11 +1251,17 @@
       };
       const inputCount = compiled.interface.inputGateIds.length;
       const outputCount = compiled.interface.outputGateIds.length;
+      const trimmedDescription = typeof entry.description === 'string' && entry.description.trim()
+        ? entry.description.trim()
+        : '';
+      const description = trimmedDescription
+        ? trimmedDescription
+        : (entry.fileName
+            ? `Custom gate imported from ${entry.fileName}.`
+            : 'Custom gate imported from a JSON snapshot.');
       return {
         label: entry.label,
-        description: entry.fileName
-          ? `Custom gate imported from ${entry.fileName}.`
-          : 'Custom gate imported from a JSON snapshot.',
+        description,
         icon: null,
         inputs: inputCount,
         outputs: outputCount,
@@ -1286,6 +1293,7 @@
         type: entry.type || '',
         label: entry.label || 'Custom Gate',
         fileName: entry.fileName || '',
+        description: typeof entry.description === 'string' ? entry.description.trim() : '',
         abbreviation: entry.abbreviation || deriveAbbreviation(entry.label),
         source: normalizedSource,
         snapshot: normalizedSnapshot
@@ -1294,6 +1302,7 @@
         normalized.type = createUniqueCustomGateType(normalized.label);
       }
       const definition = createCustomGateDefinition(normalized, normalizedSnapshot);
+      normalized.description = definition.description;
       normalized.inputNames = definition.customPortLabels.inputs.slice();
       normalized.outputNames = definition.customPortLabels.outputs.slice();
       registrySource.registerGate(normalized.type, definition, { addToPalette: false });
@@ -1359,6 +1368,7 @@
                   type: entry.type,
                   label: entry.label,
                   fileName: entry.fileName,
+                  description: entry.description,
                   abbreviation: entry.abbreviation,
                   source: 'filesystem',
                   snapshot: entry.snapshot

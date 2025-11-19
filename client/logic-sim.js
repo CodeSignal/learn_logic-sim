@@ -18,7 +18,8 @@
   const WORLD_MAX_Y = HALF_WORKSPACE - GATE_PIXEL_SIZE;
   const COORDINATE_VERSION = 2;
   const ROTATION_STEP = 90;
-  const HALF_GATE_SIZE = BASE_ICON_SIZE / 2;
+  const DEFAULT_GATE_DIMENSIONS = { width: BASE_ICON_SIZE, height: BASE_ICON_SIZE };
+  const CUSTOM_GATE_PORT_SPACING = GRID_SIZE;
 
   const normalizeRotation = (value = 0) => {
     const numeric = Number(value);
@@ -33,13 +34,26 @@
 
   const getGateRotation = (gate) => normalizeRotation(gate?.rotation || 0);
 
-  const rotatePoint = (point = { x: HALF_GATE_SIZE, y: HALF_GATE_SIZE }, rotation = 0) => {
-    const baseX = Number(point?.x);
-    const baseY = Number(point?.y);
-    const x = Number.isFinite(baseX) ? baseX : HALF_GATE_SIZE;
-    const y = Number.isFinite(baseY) ? baseY : HALF_GATE_SIZE;
-    const offsetX = x - HALF_GATE_SIZE;
-    const offsetY = y - HALF_GATE_SIZE;
+  const normalizeDimensions = (size = DEFAULT_GATE_DIMENSIONS) => {
+    const width = Number(size?.width);
+    const height = Number(size?.height);
+    return {
+      width: Number.isFinite(width) && width > 0 ? width : DEFAULT_GATE_DIMENSIONS.width,
+      height: Number.isFinite(height) && height > 0 ? height : DEFAULT_GATE_DIMENSIONS.height
+    };
+  };
+
+  const rotatePoint = (point, rotation = 0, size = DEFAULT_GATE_DIMENSIONS) => {
+    const { width, height } = normalizeDimensions(size);
+    const fallback = point || { x: width / 2, y: height / 2 };
+    const baseX = Number(fallback?.x);
+    const baseY = Number(fallback?.y);
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const x = Number.isFinite(baseX) ? baseX : halfWidth;
+    const y = Number.isFinite(baseY) ? baseY : halfHeight;
+    const offsetX = x - halfWidth;
+    const offsetY = y - halfHeight;
     const quarterTurns = Math.round(normalizeRotation(rotation) / ROTATION_STEP) % 4;
     let rotatedX = offsetX;
     let rotatedY = offsetY;
@@ -60,8 +74,8 @@
         break;
     }
     return {
-      x: rotatedX + HALF_GATE_SIZE,
-      y: rotatedY + HALF_GATE_SIZE
+      x: rotatedX + halfWidth,
+      y: rotatedY + halfHeight
     };
   };
 
@@ -89,20 +103,41 @@
     return letters || cleaned.slice(0, 3).toUpperCase();
   };
 
-  const distributePorts = (count, side) => {
+  const alignSizeToGrid = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      return GRID_SIZE;
+    }
+    return Math.ceil(numeric / GRID_SIZE) * GRID_SIZE;
+  };
+
+  const getGateDimensions = (definition) => normalizeDimensions(definition?.dimensions);
+
+  const computeCustomGateDimensions = (inputCount = 0, outputCount = 0) => {
+    const maxPorts = Math.max(1, inputCount, outputCount);
+    const rawHeight = (maxPorts + 1) * CUSTOM_GATE_PORT_SPACING;
+    const height = Math.max(BASE_ICON_SIZE, alignSizeToGrid(rawHeight));
+    return {
+      width: BASE_ICON_SIZE,
+      height
+    };
+  };
+
+  const distributePorts = (count, side, dimensions = DEFAULT_GATE_DIMENSIONS) => {
     if (!count) {
       return [];
     }
-    const step = BASE_ICON_SIZE / (count + 1);
+    const { width, height } = normalizeDimensions(dimensions);
+    const step = height / (count + 1);
     return Array.from({ length: count }, (_, index) => ({
-      x: side === 'input' ? 0 : BASE_ICON_SIZE,
+      x: side === 'input' ? 0 : width,
       y: Math.round(step * (index + 1))
     }));
   };
 
-  const buildAutoPortLayout = (inputs, outputs) => ({
-    inputs: distributePorts(inputs, 'input'),
-    outputs: distributePorts(outputs, 'output')
+  const buildAutoPortLayout = (inputs, outputs, dimensions = DEFAULT_GATE_DIMENSIONS) => ({
+    inputs: distributePorts(inputs, 'input', dimensions),
+    outputs: distributePorts(outputs, 'output', dimensions)
   });
   const cloneGateTemplate = (template) => ({
     id: template.id,
@@ -337,17 +372,23 @@
     let hasLoadedState = false;
     let lastWrapperSize = { width: 0, height: 0 };
     let contextMenu = null;
-    const buildSnapshotCustomGatePayload = () => customGateRecords.map((entry) => ({
-      type: entry.type,
-      label: entry.label,
-      fileName: entry.fileName || '',
-      description: entry.description || '',
-      inputNames: entry.inputNames.slice(),
-      outputNames: entry.outputNames.slice(),
-      abbreviation: entry.abbreviation,
-      source: entry.source,
-      snapshot: entry.snapshot
-    }));
+    const buildSnapshotCustomGatePayload = () => customGateRecords.map((entry) => {
+      const serializedVhdl = typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+        ? entry.customVhdl.trim()
+        : '';
+      return {
+        type: entry.type,
+        label: entry.label,
+        fileName: entry.fileName || '',
+        description: entry.description || '',
+        inputNames: entry.inputNames.slice(),
+        outputNames: entry.outputNames.slice(),
+        abbreviation: entry.abbreviation,
+        customVhdl: serializedVhdl,
+        source: entry.source,
+        snapshot: entry.snapshot
+      };
+    });
 
     const storageSupported = (() => {
       try {
@@ -479,6 +520,9 @@
                   ? entry.outputNames.filter((name) => typeof name === 'string')
                   : [],
                 abbreviation: typeof entry.abbreviation === 'string' ? entry.abbreviation : undefined,
+                customVhdl: typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+                  ? entry.customVhdl.trim()
+                  : '',
                 source: entry.source === 'embedded' ? 'embedded' : (entry.source === 'filesystem' ? 'filesystem' : 'library'),
                 snapshot: typeof entry.snapshot === 'object' ? entry.snapshot : null
               };
@@ -732,6 +776,29 @@
         return getSignalName(sourceGate, from.portIndex || 0);
       };
 
+      const applyCustomVhdlTemplate = (template, context) => {
+        if (!template || !template.trim()) {
+          return '';
+        }
+        const safeInputs = Array.isArray(context.inputs) && context.inputs.length
+          ? context.inputs
+          : [`'0'`];
+        const safeOutputs = Array.isArray(context.outputs) ? context.outputs : [];
+        const resolveIndexed = (collection, index, fallback = `'0'`) => {
+          const numeric = Number(index);
+          if (!Number.isFinite(numeric) || numeric < 0) {
+            return fallback;
+          }
+          return collection[numeric] ?? (collection.length ? collection[0] : fallback);
+        };
+        return template
+          .replace(/\{\{\s*input:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeInputs, index, `'0'`))
+          .replace(/\{\{\s*output:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeOutputs, index, safeOutputs[0] || `'0'`))
+          .replace(/\{\{\s*gateId\s*\}\}/gi, context.gate?.id || '')
+          .replace(/\{\{\s*label\s*\}\}/gi, (context.gate?.label || '').trim())
+          .replace(/\{\{\s*type\s*\}\}/gi, (context.definition?.label || '').trim());
+      };
+
       const signalDeclarations = new Set();
       const assignmentLines = [];
       const outputAssignments = [];
@@ -766,17 +833,37 @@
           return;
         }
 
-        if (definition.renderMode === 'custom-square') {
-          throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
-        }
-
         const definitionInputs = definition.inputs || 0;
         const inputSignals = [];
         for (let i = 0; i < definitionInputs; i += 1) {
           inputSignals.push(resolveInputSignal(gate.id, i));
         }
         const normalizedInputs = inputSignals.length ? inputSignals : [`'0'`];
-        const targetSignal = getSignalName(gate, 0);
+        const totalOutputs = definition.outputs || 0;
+        const targetSignals = [];
+        for (let i = 0; i < totalOutputs; i += 1) {
+          targetSignals.push(getSignalName(gate, i));
+        }
+
+        if (definition.renderMode === 'custom-square') {
+          if (definition.customVhdl) {
+            const snippet = applyCustomVhdlTemplate(definition.customVhdl, {
+              inputs: normalizedInputs,
+              outputs: targetSignals,
+              gate,
+              definition
+            });
+            snippet
+              .split('\n')
+              .map((line) => line.trimEnd())
+              .filter((line) => line.trim().length)
+              .forEach((line) => assignmentLines.push(line));
+            return;
+          }
+          throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
+        }
+
+        const targetSignal = targetSignals[0] || getSignalName(gate, 0);
 
         const binaryExpression = (operator) => normalizedInputs.reduce((acc, curr) => (
           acc ? `${acc} ${operator} ${curr}` : curr
@@ -1251,6 +1338,10 @@
       };
       const inputCount = compiled.interface.inputGateIds.length;
       const outputCount = compiled.interface.outputGateIds.length;
+      const customDimensions = computeCustomGateDimensions(inputCount, outputCount);
+      const customVhdl = typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+        ? entry.customVhdl.trim()
+        : '';
       const trimmedDescription = typeof entry.description === 'string' && entry.description.trim()
         ? entry.description.trim()
         : '';
@@ -1265,13 +1356,15 @@
         icon: null,
         inputs: inputCount,
         outputs: outputCount,
-        portLayout: buildAutoPortLayout(inputCount, outputCount),
+        dimensions: customDimensions,
+        portLayout: buildAutoPortLayout(inputCount, outputCount, customDimensions),
         logic,
         renderMode: 'custom-square',
         customPortLabels: {
           inputs: compiled.interface.inputNames.slice(),
           outputs: compiled.interface.outputNames.slice()
         },
+        customVhdl,
         customAbbreviation: entry.abbreviation || deriveAbbreviation(entry.label),
         customSnapshot: normalizedSnapshot,
         customCompiled: compiled
@@ -1289,12 +1382,16 @@
         throw new Error('Custom gate snapshot is missing.');
       }
       const normalizedSnapshot = normalizeSnapshot(entry.snapshot);
+      const customVhdl = typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+        ? entry.customVhdl.trim()
+        : '';
       const normalized = {
         type: entry.type || '',
         label: entry.label || 'Custom Gate',
         fileName: entry.fileName || '',
         description: typeof entry.description === 'string' ? entry.description.trim() : '',
         abbreviation: entry.abbreviation || deriveAbbreviation(entry.label),
+        customVhdl,
         source: normalizedSource,
         snapshot: normalizedSnapshot
       };
@@ -1305,6 +1402,7 @@
       normalized.description = definition.description;
       normalized.inputNames = definition.customPortLabels.inputs.slice();
       normalized.outputNames = definition.customPortLabels.outputs.slice();
+      normalized.customVhdl = definition.customVhdl;
       registrySource.registerGate(normalized.type, definition, { addToPalette: false });
       if (!paletteOrder.includes(normalized.type)) {
         paletteOrder.push(normalized.type);
@@ -1337,6 +1435,9 @@
           registerCustomGateEntry(
             {
               ...entry,
+              customVhdl: typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+                ? entry.customVhdl.trim()
+                : '',
               source: entry.source === 'library' ? 'library' : (entry.source === 'filesystem' ? 'filesystem' : 'embedded')
             },
             { rebuildPalette: false }
@@ -1370,6 +1471,9 @@
                   fileName: entry.fileName,
                   description: entry.description,
                   abbreviation: entry.abbreviation,
+                  customVhdl: typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
+                    ? entry.customVhdl.trim()
+                    : '',
                   source: 'filesystem',
                   snapshot: entry.snapshot
                 },
@@ -1399,11 +1503,12 @@
         ? { x: posX, y: posY }
         : screenToWorld(posX, posY);
 
+      const { width: gateWidth, height: gateHeight } = getGateDimensions(definition);
       const gate = {
         id: createGateId(),
         type,
-        x: snapToGrid(worldPoint.x - GATE_PIXEL_SIZE / 2),
-        y: snapToGrid(worldPoint.y - GATE_PIXEL_SIZE / 2),
+        x: snapToGrid(worldPoint.x - gateWidth / 2),
+        y: snapToGrid(worldPoint.y - gateHeight / 2),
         state: type === 'input' ? 0 : 0,
         label: '',
         rotation: 0,
@@ -1476,6 +1581,9 @@
       element.dataset.id = gate.id;
       element.title = definition.label;
       element.style.setProperty('--gate-color', 'var(--logic-gate-base)');
+      const { width, height } = getGateDimensions(definition);
+      element.style.setProperty('--gate-width', `${width}px`);
+      element.style.setProperty('--gate-height', `${height}px`);
 
       const surface = document.createElement('div');
       surface.className = 'gate-surface';
@@ -2089,7 +2197,11 @@
       if (!positions || !positions[portIndex]) {
         return null;
       }
-      const coordinates = rotatePoint(positions[portIndex], getGateRotation(gate));
+      const coordinates = rotatePoint(
+        positions[portIndex],
+        getGateRotation(gate),
+        getGateDimensions(definition)
+      );
       return {
         x: worldToCanvas(gate.x) + coordinates.x * GATE_SCALE,
         y: worldToCanvas(gate.y) + coordinates.y * GATE_SCALE

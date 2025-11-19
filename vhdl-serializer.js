@@ -89,6 +89,29 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
     return getSignalName(sourceGate, from.portIndex || 0);
   };
 
+  const applyCustomVhdlTemplate = (template, context) => {
+    if (!template || !template.trim()) {
+      return '';
+    }
+    const safeInputs = Array.isArray(context.inputs) && context.inputs.length
+      ? context.inputs
+      : [`'0'`];
+    const safeOutputs = Array.isArray(context.outputs) ? context.outputs : [];
+    const resolveIndexed = (collection, index, fallback = `'0'`) => {
+      const numeric = Number(index);
+      if (!Number.isFinite(numeric) || numeric < 0) {
+        return fallback;
+      }
+      return collection[numeric] ?? (collection.length ? collection[0] : fallback);
+    };
+    return template
+      .replace(/\{\{\s*input:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeInputs, index, `'0'`))
+      .replace(/\{\{\s*output:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeOutputs, index, safeOutputs[0] || `'0'`))
+      .replace(/\{\{\s*gateId\s*\}\}/gi, context.gate?.id || '')
+      .replace(/\{\{\s*label\s*\}\}/gi, (context.gate?.label || '').trim())
+      .replace(/\{\{\s*type\s*\}\}/gi, (context.definition?.label || '').trim());
+  };
+
   const signalDeclarations = new Set();
   const assignmentLines = [];
   const outputAssignments = [];
@@ -103,8 +126,12 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
     const definition = registryDefinition || {
       label: customEntry.label || gate.type,
       inputs: Array.isArray(customEntry.inputNames) ? customEntry.inputNames.length : 0,
-      outputs: Array.isArray(customEntry.outputNames) ? customEntry.outputNames.length : 0
+      outputs: Array.isArray(customEntry.outputNames) ? customEntry.outputNames.length : 0,
+      customVhdl: typeof customEntry.customVhdl === 'string' ? customEntry.customVhdl : ''
     };
+    const customVhdlTemplate = typeof definition.customVhdl === 'string' && definition.customVhdl.trim()
+      ? definition.customVhdl
+      : (typeof customEntry?.customVhdl === 'string' ? customEntry.customVhdl : '');
 
     if (definition.outputs > 0 && gate.type !== 'output') {
       for (let i = 0; i < definition.outputs; i += 1) {
@@ -129,34 +156,54 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
       return;
     }
 
-    if (customEntry) {
-      throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
-    }
-
     const normalizedInputs = [];
     for (let i = 0; i < definition.inputs; i += 1) {
       normalizedInputs.push(resolveInputSignal(gate.id, i));
     }
+    const resolvedInputs = normalizedInputs.length ? normalizedInputs : [`'0'`];
+    const targetSignals = [];
+    for (let i = 0; i < (definition.outputs || 0); i += 1) {
+      targetSignals.push(getSignalName(gate, i));
+    }
 
-    const targetSignal = getSignalName(gate, 0);
+    if (customEntry && !customVhdlTemplate) {
+      throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
+    }
+
+    if (customVhdlTemplate) {
+      const snippet = applyCustomVhdlTemplate(customVhdlTemplate, {
+        inputs: resolvedInputs,
+        outputs: targetSignals,
+        gate,
+        definition
+      });
+      snippet
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter((line) => line.trim().length)
+        .forEach((line) => assignmentLines.push(line));
+      return;
+    }
+
+    const targetSignal = targetSignals[0] || getSignalName(gate, 0);
 
     const binaryExpression = (operator) => {
-      if (!normalizedInputs.length) {
+      if (!resolvedInputs.length) {
         return null;
       }
-      if (normalizedInputs.length === 1) {
-        return normalizedInputs[0];
+      if (resolvedInputs.length === 1) {
+        return resolvedInputs[0];
       }
-      return normalizedInputs.map((input) => `(${input})`).join(` ${operator} `);
+      return resolvedInputs.map((input) => `(${input})`).join(` ${operator} `);
     };
 
-    let expression = normalizedInputs[0] || `'0'`;
+    let expression = resolvedInputs[0] || `'0'`;
     switch (gate.type) {
       case 'buffer':
-        expression = normalizedInputs[0] || `'0'`;
+        expression = resolvedInputs[0] || `'0'`;
         break;
       case 'not':
-        expression = normalizedInputs[0] ? `not (${normalizedInputs[0]})` : `'1'`;
+        expression = resolvedInputs[0] ? `not (${resolvedInputs[0]})` : `'1'`;
         break;
       case 'and':
         expression = binaryExpression('and') || `'0'`;
@@ -174,7 +221,7 @@ function serializeSnapshotToVhdl(snapshot = { gates: [], connections: [] }) {
         expression = binaryExpression('xor') || `'0'`;
         break;
       default:
-        expression = normalizedInputs[0] || `'0'`;
+        expression = resolvedInputs[0] || `'0'`;
     }
 
     const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;

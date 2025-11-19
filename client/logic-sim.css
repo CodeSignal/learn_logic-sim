@@ -6,6 +6,8 @@
   --logic-grid-line: color-mix(in srgb, var(--bespoke-stroke) 45%, transparent);
   --logic-highlight: var(--bespoke-accent);
   --gate-size: 64px;
+  --gate-width: var(--gate-size);
+  --gate-height: var(--gate-size);
   --port-size: 8px;
   --logic-gate-base: #000000;
   --logic-gate-active: var(--logic-highlight);
@@ -220,8 +222,8 @@
 
 .logic-sim .gate {
   position: absolute;
-  width: var(--gate-size);
-  height: var(--gate-size);
+  width: var(--gate-width);
+  height: var(--gate-height);
   padding: 0;
   border: none;
   border-radius: var(--bespoke-radius-md);

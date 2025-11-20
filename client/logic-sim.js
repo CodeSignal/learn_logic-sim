@@ -1,228 +1,43 @@
+import { onDocumentReady } from './js/dom-ready.js';
+import {
+  STORAGE_KEY,
+  WORKSPACE_SIZE,
+  DEFAULT_SCALE,
+  MIN_SCALE,
+  MAX_SCALE,
+  PORT_SIZE,
+  GRID_SIZE,
+  SAVE_DEBOUNCE,
+  RETRY_DELAY,
+  GATE_SCALE,
+  WORLD_MIN_X,
+  WORLD_MAX_X,
+  WORLD_MIN_Y,
+  WORLD_MAX_Y,
+  COORDINATE_VERSION
+} from './js/sim/constants.js';
+import {
+  normalizeRotation,
+  getGateRotation,
+  normalizeDimensions,
+  rotatePoint,
+  computeCustomGateDimensions,
+  buildAutoPortLayout,
+  worldToCanvas,
+  canvasToWorld,
+  worldPointToCanvas
+} from './js/sim/geometry.js';
+import {
+  slugifyGateName,
+  deriveAbbreviation,
+  cloneGateTemplate,
+  compileCustomGateSnapshot
+} from './js/sim/custom-gate-utils.js';
+import { normalizeSnapshot, flattenSnapshotForExport } from './js/sim/snapshot.js';
+import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
+
 (function() {
-  const STORAGE_KEY = 'logic-circuit-lab-state-v1';
-  const BASE_ICON_SIZE = 64;
-  const WORKSPACE_SIZE = 6000;
-  const DEFAULT_SCALE = 1.5;
-  const MIN_SCALE = 0.5;
-  const MAX_SCALE = 2.75;
-  const PORT_SIZE = 8;
-  const GRID_SIZE = 16;
-  const SAVE_DEBOUNCE = 500;
-  const RETRY_DELAY = 3000;
-  const GATE_SCALE = 1;
-  const GATE_PIXEL_SIZE = BASE_ICON_SIZE * GATE_SCALE;
-  const HALF_WORKSPACE = WORKSPACE_SIZE / 2;
-  const WORLD_MIN_X = -HALF_WORKSPACE;
-  const WORLD_MAX_X = HALF_WORKSPACE - GATE_PIXEL_SIZE;
-  const WORLD_MIN_Y = -HALF_WORKSPACE;
-  const WORLD_MAX_Y = HALF_WORKSPACE - GATE_PIXEL_SIZE;
-  const COORDINATE_VERSION = 2;
-  const ROTATION_STEP = 90;
-  const DEFAULT_GATE_DIMENSIONS = { width: BASE_ICON_SIZE, height: BASE_ICON_SIZE };
-  const CUSTOM_GATE_PORT_SPACING = GRID_SIZE;
-
-  const normalizeRotation = (value = 0) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) {
-      return 0;
-    }
-    const steps = Math.round(numeric / ROTATION_STEP);
-    const normalized = steps * ROTATION_STEP;
-    const wrapped = ((normalized % 360) + 360) % 360;
-    return wrapped;
-  };
-
-  const getGateRotation = (gate) => normalizeRotation(gate?.rotation || 0);
-
-  const normalizeDimensions = (size = DEFAULT_GATE_DIMENSIONS) => {
-    const width = Number(size?.width);
-    const height = Number(size?.height);
-    return {
-      width: Number.isFinite(width) && width > 0 ? width : DEFAULT_GATE_DIMENSIONS.width,
-      height: Number.isFinite(height) && height > 0 ? height : DEFAULT_GATE_DIMENSIONS.height
-    };
-  };
-
-  const rotatePoint = (point, rotation = 0, size = DEFAULT_GATE_DIMENSIONS) => {
-    const { width, height } = normalizeDimensions(size);
-    const fallback = point || { x: width / 2, y: height / 2 };
-    const baseX = Number(fallback?.x);
-    const baseY = Number(fallback?.y);
-    const halfWidth = width / 2;
-    const halfHeight = height / 2;
-    const x = Number.isFinite(baseX) ? baseX : halfWidth;
-    const y = Number.isFinite(baseY) ? baseY : halfHeight;
-    const offsetX = x - halfWidth;
-    const offsetY = y - halfHeight;
-    const quarterTurns = Math.round(normalizeRotation(rotation) / ROTATION_STEP) % 4;
-    let rotatedX = offsetX;
-    let rotatedY = offsetY;
-    switch ((quarterTurns + 4) % 4) {
-      case 1:
-        rotatedX = -offsetY;
-        rotatedY = offsetX;
-        break;
-      case 2:
-        rotatedX = -offsetX;
-        rotatedY = -offsetY;
-        break;
-      case 3:
-        rotatedX = offsetY;
-        rotatedY = -offsetX;
-        break;
-      default:
-        break;
-    }
-    return {
-      x: rotatedX + halfWidth,
-      y: rotatedY + halfHeight
-    };
-  };
-
-  const slugifyGateName = (value = '', fallback = 'custom-gate') => {
-    const cleaned = value
-      .toString()
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    return cleaned || fallback;
-  };
-
-  const deriveAbbreviation = (label = '') => {
-    const cleaned = (label || '').trim();
-    if (!cleaned) {
-      return 'CG';
-    }
-    const letters = cleaned
-      .split(/\s+/)
-      .map((word) => word[0])
-      .join('')
-      .slice(0, 3)
-      .toUpperCase();
-    return letters || cleaned.slice(0, 3).toUpperCase();
-  };
-
-  const alignSizeToGrid = (value) => {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric) || numeric <= 0) {
-      return GRID_SIZE;
-    }
-    return Math.ceil(numeric / GRID_SIZE) * GRID_SIZE;
-  };
-
   const getGateDimensions = (definition) => normalizeDimensions(definition?.dimensions);
-
-  const computeCustomGateDimensions = (inputCount = 0, outputCount = 0) => {
-    const maxPorts = Math.max(1, inputCount, outputCount);
-    const rawHeight = (maxPorts + 1) * CUSTOM_GATE_PORT_SPACING;
-    const height = Math.max(BASE_ICON_SIZE, alignSizeToGrid(rawHeight));
-    return {
-      width: BASE_ICON_SIZE,
-      height
-    };
-  };
-
-  const distributePorts = (count, side, dimensions = DEFAULT_GATE_DIMENSIONS) => {
-    if (!count) {
-      return [];
-    }
-    const { width, height } = normalizeDimensions(dimensions);
-    const step = height / (count + 1);
-    return Array.from({ length: count }, (_, index) => ({
-      x: side === 'input' ? 0 : width,
-      y: Math.round(step * (index + 1))
-    }));
-  };
-
-  const buildAutoPortLayout = (inputs, outputs, dimensions = DEFAULT_GATE_DIMENSIONS) => ({
-    inputs: distributePorts(inputs, 'input', dimensions),
-    outputs: distributePorts(outputs, 'output', dimensions)
-  });
-  const cloneGateTemplate = (template) => ({
-    id: template.id,
-    type: template.type,
-    label: template.label,
-    state: template.state,
-    inputs: template.inputs,
-    outputs: template.outputs,
-    outputValues: new Array(template.outputs).fill(0),
-    inputCache: new Array(template.inputs).fill(0)
-  });
-
-  const buildConnectionLookupMap = (connections = []) => {
-    const lookup = new Map();
-    connections.forEach((connection) => {
-      if (!connection?.to?.gateId) {
-        return;
-      }
-      const key = `${connection.to.gateId}:${Number(connection.to.portIndex) || 0}`;
-      lookup.set(key, {
-        gateId: connection.from?.gateId,
-        portIndex: Number(connection.from?.portIndex) || 0
-      });
-    });
-    return lookup;
-  };
-
-  const prepareCustomGateInterface = (snapshot = {}) => {
-    const gates = Array.isArray(snapshot.gates) ? snapshot.gates : [];
-    const inputs = gates.filter((gate) => gate.type === 'input');
-    const outputs = gates.filter((gate) => gate.type === 'output');
-    if (!inputs.length || !outputs.length) {
-      throw new Error('Custom gate snapshots must include at least one input and one output gate.');
-    }
-    const normalizeName = (label, index, fallbackPrefix) => (label && label.trim())
-      ? label.trim()
-      : `${fallbackPrefix} ${index + 1}`;
-    return {
-      inputGateIds: inputs.map((gate) => gate.id),
-      outputGateIds: outputs.map((gate) => gate.id),
-      inputNames: inputs.map((gate, index) => normalizeName(gate.label || '', index, 'In')),
-      outputNames: outputs.map((gate, index) => normalizeName(gate.label || '', index, 'Out'))
-    };
-  };
-
-  const compileCustomGateSnapshot = (snapshot = {}) => {
-    const interfaceInfo = prepareCustomGateInterface(snapshot);
-    const gates = new Map();
-    (snapshot.gates || []).forEach((gate) => {
-      const definition = gateDefinitions[gate.type];
-      if (!definition) {
-        throw new Error(`Gate type "${gate.type}" is not registered.`);
-      }
-      gates.set(gate.id, {
-        id: gate.id,
-        type: gate.type,
-        label: typeof gate.label === 'string' ? gate.label : '',
-        state: Number(gate.state) === 1 ? 1 : 0,
-        inputs: definition.inputs,
-        outputs: definition.outputs
-      });
-    });
-    const connections = (snapshot.connections || [])
-      .map((connection) => ({
-        id: connection.id,
-        from: {
-          gateId: connection.from?.gateId,
-          portIndex: Number(connection.from?.portIndex) || 0
-        },
-        to: {
-          gateId: connection.to?.gateId,
-          portIndex: Number(connection.to?.portIndex) || 0
-        }
-      }))
-      .filter((connection) =>
-        gates.has(connection.from.gateId) &&
-        gates.has(connection.to.gateId)
-      );
-    return {
-      templateGates: gates,
-      connections,
-      interface: interfaceInfo,
-      connectionLookup: buildConnectionLookupMap(connections)
-    };
-  };
 
   const instantiateCustomRuntime = (compiled) => {
     const gates = new Map();
@@ -294,13 +109,6 @@
     return compiled.interface.outputGateIds.map((gateId) => getInputValue(gateId, 0));
   };
 
-  const worldToCanvas = (value) => value + HALF_WORKSPACE;
-  const canvasToWorld = (value) => value - HALF_WORKSPACE;
-  const worldPointToCanvas = (point) => ({
-    x: worldToCanvas(point.x),
-    y: worldToCanvas(point.y)
-  });
-
   const snapToGrid = (value) => Math.round(value / GRID_SIZE) * GRID_SIZE;
 
   const registrySource = typeof window !== 'undefined' ? window.gateRegistry : null;
@@ -312,15 +120,7 @@
     ? registrySource.paletteOrder.slice()
     : Object.keys(gateDefinitions);
 
-  const ready = (callback) => {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', callback);
-    } else {
-      callback();
-    }
-  };
-
-  ready(async () => {
+  onDocumentReady(async () => {
     const setStatus = typeof window.setStatus === 'function' ? window.setStatus : () => {};
     const paletteEl = document.getElementById('palette');
     const canvasEl = document.getElementById('canvas');
@@ -449,97 +249,6 @@
       } catch (error) {
         console.warn('Failed to load gate-config.json:', error);
       }
-    };
-
-    const normalizeSnapshot = (input = {}) => {
-      const payload = input && typeof input === 'object'
-        ? (typeof input.snapshot === 'object' ? input.snapshot : input)
-        : {};
-
-      const declaredOrigin = typeof payload.origin === 'string' ? payload.origin.toLowerCase() : null;
-      const version = Number(payload.version) || 1;
-      const originMode = declaredOrigin === 'center'
-        ? 'center'
-        : (declaredOrigin === 'top-left' ? 'top-left' : (version >= COORDINATE_VERSION ? 'center' : 'top-left'));
-
-      const convertCoordinate = (value) => {
-        const numeric = Number(value);
-        if (!Number.isFinite(numeric)) {
-          return 0;
-        }
-        return originMode === 'center' ? numeric : numeric - HALF_WORKSPACE;
-      };
-
-      const gatesSource = Array.isArray(payload.gates)
-        ? payload.gates
-        : (Array.isArray(payload.positions) ? payload.positions : []);
-
-      const gates = gatesSource.map((entry) => ({
-        id: entry.id,
-        type: entry.type,
-        x: convertCoordinate(entry.x),
-        y: convertCoordinate(entry.y),
-        label: typeof entry.label === 'string' ? entry.label : '',
-        state: Number(entry.state) === 1 ? 1 : 0,
-        rotation: normalizeRotation(entry.rotation)
-      }));
-
-      const normalizePortIndex = (value) => {
-        const numeric = Number(value);
-        return Number.isFinite(numeric) ? numeric : 0;
-      };
-
-      const connections = Array.isArray(payload.connections)
-        ? payload.connections.map((connection) => ({
-            id: connection.id ?? Math.random().toString(36).slice(2, 15),
-            from: {
-              gateId: connection.from?.gateId,
-              portIndex: normalizePortIndex(connection.from?.portIndex)
-            },
-            to: {
-              gateId: connection.to?.gateId,
-              portIndex: normalizePortIndex(connection.to?.portIndex)
-            }
-          }))
-        : [];
-
-      const customGates = Array.isArray(payload.customGates)
-        ? payload.customGates
-            .map((entry) => {
-              if (!entry || typeof entry.type !== 'string') {
-                return null;
-              }
-              return {
-                type: entry.type,
-                label: typeof entry.label === 'string' ? entry.label : entry.type,
-                fileName: typeof entry.fileName === 'string' ? entry.fileName : '',
-                inputNames: Array.isArray(entry.inputNames)
-                  ? entry.inputNames.filter((name) => typeof name === 'string')
-                  : [],
-                outputNames: Array.isArray(entry.outputNames)
-                  ? entry.outputNames.filter((name) => typeof name === 'string')
-                  : [],
-                abbreviation: typeof entry.abbreviation === 'string' ? entry.abbreviation : undefined,
-                customVhdl: typeof entry.customVhdl === 'string' && entry.customVhdl.trim()
-                  ? entry.customVhdl.trim()
-                  : '',
-                source: entry.source === 'embedded' ? 'embedded' : (entry.source === 'filesystem' ? 'filesystem' : 'library'),
-                snapshot: typeof entry.snapshot === 'object' ? entry.snapshot : null
-              };
-            })
-            .filter(Boolean)
-        : [];
-
-      const nextId = Number(payload.nextId);
-
-      return {
-        version,
-        origin: 'center',
-        nextId: Number.isFinite(nextId) && nextId > 0 ? nextId : undefined,
-        gates,
-        connections,
-        customGates
-      };
     };
 
     const applyViewTransform = () => {
@@ -695,417 +404,8 @@
       }
     };
 
-    const serializeSnapshotToVhdl = (snapshot = { gates: [], connections: [] }) => {
-      const gateMap = new Map((snapshot.gates || []).map((gate) => [gate.id, gate]));
-      const connectionLookup = new Map();
-      (snapshot.connections || []).forEach((connection) => {
-        if (!connection?.to?.gateId) {
-          return;
-        }
-        const key = `${connection.to.gateId}:${Number(connection.to.portIndex) || 0}`;
-        connectionLookup.set(key, {
-          gateId: connection.from?.gateId,
-          portIndex: Number(connection.from?.portIndex) || 0
-        });
-      });
-
-      const usedNames = new Set();
-      const signalNameMap = new Map();
-      const portNameMap = new Map();
-
-      const sanitizeIdentifier = (value, fallback) => {
-        const cleaned = (value || '')
-          .toString()
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9_]+/g, '_');
-        let candidate = cleaned.replace(/^[^a-z_]+/, '');
-        if (!candidate) {
-          candidate = fallback;
-        }
-        return candidate || fallback;
-      };
-
-      const ensureUnique = (base) => {
-        let candidate = base;
-        let counter = 1;
-        while (usedNames.has(candidate.toLowerCase())) {
-          candidate = `${base}_${counter}`;
-          counter += 1;
-        }
-        usedNames.add(candidate.toLowerCase());
-        return candidate;
-      };
-
-      const getSignalName = (gate, index = 0) => {
-        const key = `${gate.id}:${index}`;
-        if (signalNameMap.has(key)) {
-          return signalNameMap.get(key);
-        }
-        const definition = gateDefinitions[gate.type];
-        const typeSlug = sanitizeIdentifier((definition?.label || gate.type), `node_${gate.id}`);
-        const labelSlug = (gate.label || '').trim() ? sanitizeIdentifier(gate.label, `${typeSlug}_${gate.id}`) : '';
-        const base = labelSlug || `${typeSlug}_${gate.id}_${index}`;
-        const unique = ensureUnique(base || `node_${gate.id}_${index}`);
-        signalNameMap.set(key, unique);
-        return unique;
-      };
-
-      const getPortName = (gate) => {
-        if (portNameMap.has(gate.id)) {
-          return portNameMap.get(gate.id);
-        }
-        const definition = gateDefinitions[gate.type];
-        const typeSlug = sanitizeIdentifier((definition?.label || gate.type), `out_${gate.id}`);
-        const baseCandidate = (gate.label || '').trim() ? sanitizeIdentifier(gate.label, `${typeSlug}_${gate.id}`) : `${typeSlug}_${gate.id}`;
-        const unique = ensureUnique(baseCandidate || `out_${gate.id}`);
-        portNameMap.set(gate.id, unique);
-        return unique;
-      };
-
-      const resolveInputSignal = (gateId, portIndex) => {
-        const key = `${gateId}:${portIndex}`;
-        const from = connectionLookup.get(key);
-        if (!from) {
-          return `'0'`;
-        }
-        const sourceGate = gateMap.get(from.gateId);
-        if (!sourceGate) {
-          return `'0'`;
-        }
-        return getSignalName(sourceGate, from.portIndex || 0);
-      };
-
-      const applyCustomVhdlTemplate = (template, context) => {
-        if (!template || !template.trim()) {
-          return '';
-        }
-        const safeInputs = Array.isArray(context.inputs) && context.inputs.length
-          ? context.inputs
-          : [`'0'`];
-        const safeOutputs = Array.isArray(context.outputs) ? context.outputs : [];
-        const resolveIndexed = (collection, index, fallback = `'0'`) => {
-          const numeric = Number(index);
-          if (!Number.isFinite(numeric) || numeric < 0) {
-            return fallback;
-          }
-          return collection[numeric] ?? (collection.length ? collection[0] : fallback);
-        };
-        return template
-          .replace(/\{\{\s*input:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeInputs, index, `'0'`))
-          .replace(/\{\{\s*output:(\d+)\s*\}\}/gi, (_, index) => resolveIndexed(safeOutputs, index, safeOutputs[0] || `'0'`))
-          .replace(/\{\{\s*gateId\s*\}\}/gi, context.gate?.id || '')
-          .replace(/\{\{\s*label\s*\}\}/gi, (context.gate?.label || '').trim())
-          .replace(/\{\{\s*type\s*\}\}/gi, (context.definition?.label || '').trim());
-      };
-
-      const signalDeclarations = new Set();
-      const assignmentLines = [];
-      const outputAssignments = [];
-      const outputPorts = [];
-
-      (snapshot.gates || []).forEach((gate) => {
-        const definition = gateDefinitions[gate.type];
-        if (!definition) {
-          return;
-        }
-
-        if (definition.outputs > 0 && gate.type !== 'output') {
-          for (let i = 0; i < definition.outputs; i += 1) {
-            const sig = getSignalName(gate, i);
-            signalDeclarations.add(`signal ${sig} : STD_LOGIC;`);
-          }
-        }
-
-        if (gate.type === 'input') {
-          const sig = getSignalName(gate, 0);
-          const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
-          assignmentLines.push(`${sig} <= '${gate.state ? '1' : '0'}';${comment}`);
-          return;
-        }
-
-        if (gate.type === 'output') {
-          const inputSignal = resolveInputSignal(gate.id, 0);
-          const portName = getPortName(gate);
-          outputPorts.push(`${portName} : out STD_LOGIC`);
-          const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
-          outputAssignments.push(`${portName} <= ${inputSignal || "'0'"};${comment}`);
-          return;
-        }
-
-        const definitionInputs = definition.inputs || 0;
-        const inputSignals = [];
-        for (let i = 0; i < definitionInputs; i += 1) {
-          inputSignals.push(resolveInputSignal(gate.id, i));
-        }
-        const normalizedInputs = inputSignals.length ? inputSignals : [`'0'`];
-        const totalOutputs = definition.outputs || 0;
-        const targetSignals = [];
-        for (let i = 0; i < totalOutputs; i += 1) {
-          targetSignals.push(getSignalName(gate, i));
-        }
-
-        if (definition.renderMode === 'custom-square') {
-          if (definition.customVhdl) {
-            const snippet = applyCustomVhdlTemplate(definition.customVhdl, {
-              inputs: normalizedInputs,
-              outputs: targetSignals,
-              gate,
-              definition
-            });
-            snippet
-              .split('\n')
-              .map((line) => line.trimEnd())
-              .filter((line) => line.trim().length)
-              .forEach((line) => assignmentLines.push(line));
-            return;
-          }
-          throw new Error(`Custom gate "${definition.label}" cannot be exported to VHDL. Please expand the circuit before exporting.`);
-        }
-
-        const targetSignal = targetSignals[0] || getSignalName(gate, 0);
-
-        const binaryExpression = (operator) => normalizedInputs.reduce((acc, curr) => (
-          acc ? `${acc} ${operator} ${curr}` : curr
-        ), '');
-
-        let expression;
-        switch (gate.type) {
-          case 'buffer':
-            expression = normalizedInputs[0] || `'0'`;
-            break;
-          case 'not':
-            expression = `not ${normalizedInputs[0] || "'0'"}`;
-            break;
-          case 'and':
-            expression = binaryExpression('and') || `'0'`;
-            break;
-          case 'nand':
-            expression = `not (${binaryExpression('and') || "'0'"})`;
-            break;
-          case 'or':
-            expression = binaryExpression('or') || `'0'`;
-            break;
-          case 'nor':
-            expression = `not (${binaryExpression('or') || "'0'"})`;
-            break;
-          case 'xor':
-            expression = binaryExpression('xor') || `'0'`;
-            break;
-          default:
-            expression = normalizedInputs[0] || `'0'`;
-        }
-
-        const comment = gate.label ? ` -- ${definition.label} ${gate.label}` : ` -- ${definition.label}`;
-        assignmentLines.push(`${targetSignal} <= ${expression};${comment}`);
-      });
-
-      const commentLines = [
-        '-- Logic Circuit Lab export',
-        ''
-      ];
-
-      const headerLines = [
-        'library IEEE;',
-        'use IEEE.STD_LOGIC_1164.ALL;',
-        ''
-      ];
-
-      const entityLines = outputPorts.length
-        ? [
-            'entity logic_circuit_lab is',
-            '  port (',
-            `    ${outputPorts.join(',\n    ')}`,
-            '  );',
-            'end entity logic_circuit_lab;',
-            ''
-          ]
-        : [
-            'entity logic_circuit_lab is',
-            'end entity logic_circuit_lab;',
-            ''
-          ];
-
-      const architectureLines = [
-        'architecture behavioral of logic_circuit_lab is',
-        ...Array.from(signalDeclarations).map((line) => `  ${line}`),
-        'begin',
-        ...assignmentLines.map((line) => `  ${line}`),
-        ...outputAssignments.map((line) => `  ${line}`),
-        'end architecture behavioral;',
-        ''
-      ];
-
-      return [
-        ...commentLines,
-        ...headerLines,
-        ...entityLines,
-        ...architectureLines
-      ].join('\n');
-    };
-
-    const flattenSnapshotForExport = (snapshot = {}) => {
-      const originalGates = Array.isArray(snapshot.gates) ? snapshot.gates : [];
-      const originalConnections = Array.isArray(snapshot.connections) ? snapshot.connections : [];
-      const usedIds = new Set(originalGates.map((gate) => String(gate.id)));
-      const mapOriginalId = new Map();
-      const flattenedGates = [];
-      const flattenedConnections = [];
-      const expansions = new Map();
-      let connectionCounter = 0;
-
-      const generateGateId = () => {
-        let candidate;
-        do {
-          candidate = `cxg${connectionCounter++}`;
-        } while (usedIds.has(candidate));
-        usedIds.add(candidate);
-        return candidate;
-      };
-
-      const generateConnectionId = (preferred) => {
-        if (preferred && !usedIds.has(preferred)) {
-          usedIds.add(preferred);
-          return preferred;
-        }
-        let candidate;
-        do {
-          candidate = `cxc${connectionCounter++}`;
-        } while (usedIds.has(candidate));
-        usedIds.add(candidate);
-        return candidate;
-      };
-
-      const addConnection = (from, to, originalId) => {
-        if (!from?.gateId || !to?.gateId) {
-          return;
-        }
-        flattenedConnections.push({
-          id: generateConnectionId(originalId),
-          from: { gateId: from.gateId, portIndex: Number(from.portIndex) || 0 },
-          to: { gateId: to.gateId, portIndex: Number(to.portIndex) || 0 }
-        });
-      };
-
-      originalGates.forEach((gate) => {
-        const definition = gateDefinitions[gate.type];
-        if (!definition) {
-          return;
-        }
-        if (definition.renderMode !== 'custom-square' || !definition.customSnapshot) {
-          mapOriginalId.set(gate.id, gate.id);
-          flattenedGates.push({ ...gate });
-          return;
-        }
-
-        const snapshotClone = normalizeSnapshot(definition.customSnapshot);
-        const interfaceInfo = prepareCustomGateInterface(snapshotClone);
-        const placeholderInputIndex = new Map();
-        interfaceInfo.inputGateIds.forEach((id, index) => placeholderInputIndex.set(id, index));
-        const placeholderOutputIndex = new Map();
-        interfaceInfo.outputGateIds.forEach((id, index) => placeholderOutputIndex.set(id, index));
-
-        const internalGateIdMap = new Map();
-
-        snapshotClone.gates.forEach((child) => {
-          if (placeholderInputIndex.has(child.id) || placeholderOutputIndex.has(child.id)) {
-            return;
-          }
-          const childDefinition = gateDefinitions[child.type];
-          if (!childDefinition) {
-            throw new Error(`Custom gate snapshot for "${definition.label}" references unknown gate "${child.type}".`);
-          }
-          if (childDefinition.renderMode === 'custom-square') {
-            throw new Error(`Nested custom gates are not supported inside "${definition.label}".`);
-          }
-          const newId = generateGateId();
-          internalGateIdMap.set(child.id, newId);
-          flattenedGates.push({ ...child, id: newId });
-        });
-
-        const inputTargets = new Map();
-        const outputSources = new Map();
-
-        snapshotClone.connections.forEach((connection) => {
-          const fromIndex = placeholderInputIndex.get(connection.from?.gateId);
-          const toIndex = placeholderOutputIndex.get(connection.to?.gateId);
-          if (fromIndex !== undefined) {
-            const targetGateId = internalGateIdMap.get(connection.to?.gateId);
-            if (targetGateId) {
-              const targets = inputTargets.get(fromIndex) || [];
-              targets.push({
-                gateId: targetGateId,
-                portIndex: Number(connection.to?.portIndex) || 0
-              });
-              inputTargets.set(fromIndex, targets);
-            }
-            return;
-          }
-          if (toIndex !== undefined) {
-            const sourceGateId = internalGateIdMap.get(connection.from?.gateId);
-            if (sourceGateId) {
-              const sources = outputSources.get(toIndex) || [];
-              sources.push({
-                gateId: sourceGateId,
-                portIndex: Number(connection.from?.portIndex) || 0
-              });
-              outputSources.set(toIndex, sources);
-            }
-            return;
-          }
-          const fromId = internalGateIdMap.get(connection.from?.gateId);
-          const toId = internalGateIdMap.get(connection.to?.gateId);
-          if (fromId && toId) {
-            addConnection(
-              { gateId: fromId, portIndex: Number(connection.from?.portIndex) || 0 },
-              { gateId: toId, portIndex: Number(connection.to?.portIndex) || 0 },
-              connection.id
-            );
-          }
-        });
-
-        expansions.set(gate.id, { inputTargets, outputSources });
-      });
-
-      originalConnections.forEach((connection) => {
-        const fromExpansion = expansions.get(connection.from?.gateId);
-        const toExpansion = expansions.get(connection.to?.gateId);
-        const sourceList = fromExpansion
-          ? (fromExpansion.outputSources.get(connection.from?.portIndex) || [])
-          : [{ gateId: mapOriginalId.get(connection.from?.gateId), portIndex: Number(connection.from?.portIndex) || 0 }];
-        const targetList = toExpansion
-          ? (toExpansion.inputTargets.get(connection.to?.portIndex) || [])
-          : [{ gateId: mapOriginalId.get(connection.to?.gateId), portIndex: Number(connection.to?.portIndex) || 0 }];
-
-        sourceList.forEach((source) => {
-          if (!source?.gateId) {
-            return;
-          }
-          targetList.forEach((target) => {
-            if (!target?.gateId) {
-              return;
-            }
-            addConnection(source, target, connection.id);
-          });
-        });
-      });
-
-      const nextIdCandidate = flattenedGates.reduce((max, gate) => {
-        const numeric = Number(String(gate.id).replace(/\D+/g, ''));
-        if (Number.isFinite(numeric)) {
-          return Math.max(max, numeric + 1);
-        }
-        return max;
-      }, 1);
-
-      return {
-        version: snapshot.version || COORDINATE_VERSION,
-        origin: snapshot.origin || 'center',
-        nextId: Math.max(Number(snapshot.nextId) || 1, nextIdCandidate),
-        gates: flattenedGates,
-        connections: flattenedConnections
-      };
-    };
+    
+    
 
     const exportCircuitToVhdl = async () => {
       if (exportRetryTimer) {
@@ -1113,8 +413,8 @@
         exportRetryTimer = null;
       }
       const originalSnapshot = getCircuitSnapshot();
-      const flattenedSnapshot = flattenSnapshotForExport(originalSnapshot);
-      const vhdl = serializeSnapshotToVhdl(flattenedSnapshot);
+      const flattenedSnapshot = flattenSnapshotForExport(originalSnapshot, gateDefinitions);
+      const vhdl = serializeSnapshotToVhdl(flattenedSnapshot, gateDefinitions);
       try {
         setStatus('Saving...');
         const response = await fetch('/vhdl/export', {
@@ -1329,7 +629,7 @@
       if (!normalizedSnapshot) {
         throw new Error('Custom gate snapshot is required.');
       }
-      const compiled = compileCustomGateSnapshot(normalizedSnapshot);
+      const compiled = compileCustomGateSnapshot(normalizedSnapshot, gateDefinitions);
       const logic = (inputs, gate) => {
         if (!gate.customRuntime) {
           gate.customRuntime = instantiateCustomRuntime(compiled);

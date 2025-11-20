@@ -12,7 +12,7 @@
  * });
  */
 
-class HelpModal {
+export default class HelpModal {
   constructor(options = {}) {
     this.options = {
       triggerSelector: '#btn-help',
@@ -150,11 +150,4 @@ class HelpModal {
       modalBody.innerHTML = newContent;
     }
   }
-}
-
-// Export for use
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = HelpModal;
-} else {
-  window.HelpModal = HelpModal;
 }

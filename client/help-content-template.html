@@ -12,17 +12,17 @@
 
 <section id="overview">
   <h2>Overview</h2>
-  <p>Logic Circuit Lab is a drag-and-drop simulator for experimenting with logic gates without leaving the page. Build small combinational circuits, observe live signal flow, and share the resulting designs instantly.</p>
+  <p>Logic Circuit Lab is a drag-and-drop playground for experimenting with digital logic right inside your browser. Build combinational circuits, see how signals move through each gate, and share the results with classmates or teammates.</p>
 </section>
 
 <section id="getting-started">
   <h2>Getting Started</h2>
   <ol>
-    <li>Open the <strong>Circuit Elements</strong> palette and drag a gate onto the canvas, or click a tile to drop it in the center.</li>
-    <li>Place <strong>Input</strong> and <strong>Output</strong> blocks to provide circuit endpoints.</li>
-    <li>Connect components by clicking an output port and then an input port. The wire will follow the connection automatically.</li>
-    <li>Pan the workspace by dragging on empty grid space; use the trackpad or mouse wheel to zoom (150% by default).</li>
-    <li>Click an <strong>Input</strong> block (or use the <em>Toggle value</em> button in the Selection panel) to drive the circuit high (1) or low (0).</li>
+    <li>Open the <strong>Circuit Elements</strong> palette and drag any gate onto the grid, or click a tile to drop it into the center of the canvas.</li>
+    <li>Add <strong>Input</strong> and <strong>Output</strong> blocks so your circuit has places to send and receive signals.</li>
+    <li>Connect components by clicking a gate’s output port and then the destination input port. Wires route themselves between the two points.</li>
+    <li>Pan the workspace by dragging on empty grid space; use the mouse wheel or trackpad to zoom. The current zoom level appears in the toolbar.</li>
+    <li>Click an <strong>Input</strong> block (or press <em>Toggle value</em> in the contextual editor panel) to switch between logic 0 and 1 and watch the circuit update instantly.</li>
   </ol>
 </section>
 
@@ -30,38 +30,33 @@
   <h2>Key Features</h2>
 
   <h3>Gate Palette</h3>
-  <p>The palette includes the most common two-input gates plus buffer and inverter blocks. Each gate uses the standard symbol stored in <code>client/gates</code>.</p>
+  <p>Frequently used gates (AND, OR, XOR, NOT, buffer, etc.) live in the left sidebar. Hover to read a short description or use the search field to jump directly to what you need.</p>
 
   <h3>Interactive Canvas</h3>
-  <p>Drag gates to reposition them, wire connections visually, and highlight signal flow. Active signals tint their gate symbols and wire segments with the accent color.</p>
+  <p>Place, move, and rotate gates freely across the grid. Wires glow with the accent color whenever a signal is high so you can trace activity at a glance.</p>
 
   <h3>Automatic Persistence</h3>
-  <p>Your canvas is saved to local storage after every change. Watch the status bar for messages such as “Saving…” and “Changes saved”.</p>
+  <p>The canvas saves itself after each change. Keep an eye on the status pill in the header for messages such as “Saving…” and “Changes saved”.</p>
 
-  <h3>Configurable Palette</h3>
-  <p>Control which gates appear in the Circuit Elements panel and set the default zoom level by editing <code>client/gate-config.json</code>. Reload the app to apply the updated palette.</p>
-
-  <h3>Programmatic VHDL Export</h3>
-  <p>External tools can dispatch the <code>logic-sim:export-vhdl</code> event or post the same message type to trigger an export. The current circuit is written to <code>user.vhdl</code>.</p>
+  <h3>Exports &amp; Sharing</h3>
+  <p>Use the <em>Export VHDL</em> action to create a VHDL snapshot of your current circuit. When the export finishes you’ll see a confirmation toast along with any warnings from the report.</p>
 </section>
 
 <section id="workflow">
   <h2>Workflow</h2>
   <ol>
-    <li><strong>Plan</strong>: Sketch the circuit using the palette preview to decide which gates you need.</li>
-    <li><strong>Place</strong>: Drag the required gates to the canvas and arrange them to match your plan.</li>
-    <li><strong>Wire</strong>: Click an output hub, then click a target input to route a connection. Repeat for each signal path. Click an occupied input hub to remove its wire.</li>
-    <li><strong>Verify</strong>: Step through each combination by clicking your input blocks (or pressing <em>Toggle value</em> in the Selection panel). The panel summarizes every gate’s inputs, outputs, and position.</li>
+    <li><strong>Plan</strong>: Sketch the circuit on paper or in the palette preview and note how many inputs and outputs you need.</li>
+    <li><strong>Place</strong>: Drag the required gates to the canvas and arrange them so related blocks sit near each other.</li>
+    <li><strong>Wire</strong>: Click an output hub and then the destination input. Click an occupied input hub to remove or reroute its connection.</li>
+    <li><strong>Verify</strong>: Step through test cases by toggling input blocks.</li>
   </ol>
 
   <h3>Tips &amp; Best Practices</h3>
   <ul>
-    <li>Use the <em>Reset</em> button to restore the starter template. The new state is written to <code>user.vhdl</code> immediately.</li>
-    <li>Press <kbd>Delete</kbd> with a gate selected to remove it without touching the mouse.</li>
-    <li>Need to flip an input often? Click the block directly or reuse the <em>Toggle value</em> button to cycle through cases.</li>
-    <li>Name your Input and Output blocks from the right-click menu to keep larger designs organized.</li>
-    <li>Right-click any gate to rename it or trigger its quick actions.</li>
-    <li>Keep related gates close together so the auto-routed Bézier wires stay readable.</li>
+    <li>Use <em>Reset</em> whenever you want to return to the starter layout loaded on first launch.</li>
+    <li>Press <kbd>Delete</kbd> with a gate selected to remove it without leaving the keyboard.</li>
+    <li>Name inputs and outputs (right-click to open the contextual editor panel) so exported circuits are easier to read.</li>
+    <li>Group related gates close together to keep the auto-routed wires short and legible.</li>
   </ul>
 </section>
 
@@ -76,8 +71,7 @@
     <li><strong>Click output, click input</strong> – Create a wire between two components.</li>
     <li><strong>Click input hub</strong> – Remove the attached wire.</li>
     <li><strong>Right-click gate</strong> – Open the contextual editor for naming and quick actions.</li>
-    <li><strong>Click input block / Selection panel → Toggle value</strong> – Switch an input block between logic 0 and 1.</li>
-</ul>
+  </ul>
 </section>
 
 <section id="faq">
@@ -85,21 +79,21 @@
 
   <details>
     <summary>Why do I see “Save failed (will retry)”? </summary>
-    <p>This means the browser refused to write to local storage (usually because it is full or blocked). The app will retry automatically; freeing space in local storage normally resolves the issue.</p>
+    <p>The browser occasionally blocks local saves (usually because storage is full or disabled). The simulator retries in the background; clearing space or re-enabling storage fixes the warning.</p>
   </details>
 
   <details>
     <summary>How do I delete a wire?</summary>
-    <p>Attach the source output to a different input to reroute it, or connect a new output to the input to replace the existing wire. Each input accepts one connection at a time.</p>
+    <p>Click the wire’s destination input hub. Each input accepts only one connection, so removing it frees the port immediately.</p>
   </details>
 
   <details>
     <summary>The wires look misaligned after resizing the window.</summary>
-    <p>The wire layer recalculates its layout whenever the window size changes. If you still notice misalignment, move any gate slightly to trigger a full redraw.</p>
+    <p>The layout engine recalculates after every resize. If anything still looks off, nudge a gate slightly or press Reset to trigger a clean redraw.</p>
   </details>
 
   <details>
     <summary>Is my work automatically saved?</summary>
-    <p>Yes. After every change the status bar progresses through “Saving…” and “Changes saved”, followed by “Ready”.</p>
+    <p>Yes. After every change the header cycles through “Saving…”, “Changes saved”, and finally “Ready”. You can keep building without pressing a save button.</p>
   </details>
 </section>

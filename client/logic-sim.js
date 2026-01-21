@@ -408,7 +408,11 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
     
     
 
-    const exportCircuitToVhdl = async () => {
+    const wait = (delay) => new Promise((resolve) => {
+      window.setTimeout(resolve, delay);
+    });
+
+    const attemptExport = async () => {
       if (exportRetryTimer) {
         window.clearTimeout(exportRetryTimer);
         exportRetryTimer = null;
@@ -429,16 +433,39 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
           throw new Error(`Export failed with status ${response.status}`);
         }
         setStatus('Changes saved', { revertDelay: 1200 });
+        return true;
       } catch (error) {
         console.error('Failed to export VHDL:', error);
         setStatus('Save failed (will retry)', { revertDelay: 2000 });
+        return false;
+      }
+    };
+
+    const exportCircuitToVhdl = async ({ waitForCompletion = false, maxAttempts = 3 } = {}) => {
+      const success = await attemptExport();
+      if (success) {
+        return true;
+      }
+      if (!waitForCompletion) {
         if (!exportRetryTimer) {
           exportRetryTimer = window.setTimeout(() => {
             exportRetryTimer = null;
             exportCircuitToVhdl();
           }, RETRY_DELAY);
         }
+        return false;
       }
+      let attempt = 1;
+      while (attempt < maxAttempts) {
+        const delay = RETRY_DELAY * Math.pow(2, attempt - 1);
+        await wait(delay);
+        const retrySuccess = await attemptExport();
+        if (retrySuccess) {
+          return true;
+        }
+        attempt += 1;
+      }
+      return false;
     };
 
     const saveState = () => {
@@ -1817,7 +1844,7 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
     scheduleRender();
 
     window.logicSim = {
-      exportToVhdl: () => exportCircuitToVhdl(),
+      exportToVhdl: (options) => exportCircuitToVhdl(options),
       snapshot: () => getCircuitSnapshot(),
       resetToStarter: () => resetToStarter()
     };

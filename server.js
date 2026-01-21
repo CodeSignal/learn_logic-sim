@@ -25,9 +25,11 @@ const GATE_CONFIG_PATH = path.join(__dirname, 'client', 'gate-config.json');
 const INITIAL_STATE_PATH = path.join(__dirname, 'client', 'initial_state.json');
 const CUSTOM_GATES_DIR = path.join(__dirname, 'client', 'custom-gates');
 const CUSTOM_GATE_EXTENSIONS = new Set(['.json']);
+const EXPORT_TIMEOUT_MS = 30000;
 
 // Track connected WebSocket clients
 const wsClients = new Set();
+let pendingExport = null;
 
 // MIME types for different file extensions
 const mimeTypes = {
@@ -47,6 +49,28 @@ const mimeTypes = {
 function getMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   return mimeTypes[ext] || 'text/plain';
+}
+
+function createExportRequestId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function resolvePendingExport(result) {
+  if (!pendingExport) {
+    return;
+  }
+  clearTimeout(pendingExport.timeout);
+  pendingExport.resolve(result);
+  pendingExport = null;
+}
+
+function rejectPendingExport(error) {
+  if (!pendingExport) {
+    return;
+  }
+  clearTimeout(pendingExport.timeout);
+  pendingExport.reject(error);
+  pendingExport = null;
 }
 
 const slugify = (value = '', fallback = 'custom-gate') => {
@@ -290,19 +314,87 @@ const server = http.createServer((req, res) => {
   
   // Handle GET trigger for export
   if (pathname === '/vhdl/trigger-export') {
-    if (isWebSocketAvailable && wsClients.size > 0) {
-      wsClients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({ type: 'logic-sim:export-vhdl' }));
-        }
-      });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        success: true, 
-        message: 'Export triggered via WebSocket',
-        clientCount: wsClients.size 
+    if (!isWebSocketAvailable) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'WebSocket functionality not available',
+        details: 'Install the ws package with: npm install ws'
       }));
+      return;
     }
+    if (wsClients.size === 0) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'No WebSocket clients available to perform export'
+      }));
+      return;
+    }
+    if (wsClients.size > 1) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'Multiple WebSocket clients connected; expected exactly one'
+      }));
+      return;
+    }
+    if (pendingExport) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'An export is already in progress'
+      }));
+      return;
+    }
+
+    const [client] = wsClients;
+    if (!client || client.readyState !== WebSocket.OPEN) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'WebSocket client is not ready'
+      }));
+      return;
+    }
+
+    const requestId = createExportRequestId();
+    const exportPromise = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        rejectPendingExport(new Error('Export timed out'));
+      }, EXPORT_TIMEOUT_MS);
+      pendingExport = { requestId, resolve, reject, timeout };
+    });
+
+    try {
+      client.send(JSON.stringify({ type: 'logic-sim:export-vhdl', requestId }));
+    } catch (error) {
+      rejectPendingExport(error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to trigger export' }));
+      return;
+    }
+
+    exportPromise
+      .then((result) => {
+        if (result && result.success === false) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            error: 'Export failed on client',
+            details: result.error || 'Unknown error'
+          }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Export completed via WebSocket'
+        }));
+      })
+      .catch((error) => {
+        const message = error?.message || 'Unknown error';
+        const isTimeout = message === 'Export timed out';
+        res.writeHead(isTimeout ? 504 : 502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: isTimeout ? 'Export timed out' : 'Export did not complete',
+          details: message
+        }));
+      });
     return;
   }
 
@@ -353,14 +445,39 @@ if (isWebSocketAvailable) {
     console.log('New WebSocket client connected');
     wsClients.add(ws);
 
+    ws.on('message', (data) => {
+      let payload;
+      try {
+        payload = JSON.parse(data.toString());
+      } catch (error) {
+        console.warn('Failed to parse WebSocket message:', error.message);
+        return;
+      }
+      if (payload?.type === 'logic-sim:export-vhdl:done') {
+        if (!pendingExport || payload.requestId !== pendingExport.requestId) {
+          return;
+        }
+        resolvePendingExport({
+          success: payload.success !== false,
+          error: payload.error
+        });
+      }
+    });
+
     ws.on('close', () => {
       console.log('WebSocket client disconnected');
       wsClients.delete(ws);
+      if (pendingExport) {
+        rejectPendingExport(new Error('WebSocket client disconnected'));
+      }
     });
 
     ws.on('error', (error) => {
       console.error('WebSocket error:', error);
       wsClients.delete(ws);
+      if (pendingExport) {
+        rejectPendingExport(error);
+      }
     });
   });
 }

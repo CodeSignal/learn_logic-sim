@@ -18,10 +18,11 @@ onDocumentReady(async () => {
   });
 
   initializeWebSocketBridge({
-    onExportRequest: () => {
+    onExportRequest: async () => {
       if (window.logicSim && typeof window.logicSim.exportToVhdl === 'function') {
-        window.logicSim.exportToVhdl();
+        return window.logicSim.exportToVhdl({ waitForCompletion: true });
       }
+      return false;
     }
   });
 });

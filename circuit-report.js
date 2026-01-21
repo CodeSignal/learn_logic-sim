@@ -434,43 +434,49 @@ function buildReportOptions(gateConfig = {}) {
   };
 }
 
-function printCircuitReport(snapshot, gateConfig = {}) {
+function buildCircuitReportLines(snapshot, gateConfig = {}) {
   const options = buildReportOptions(gateConfig);
   if (!options.enabled) {
-    return;
+    return [];
   }
 
   const model = buildCircuitModel(snapshot || {});
-  console.log('\n=== Circuit Export Report ===');
+  const lines = [];
+  const pushLine = (line = '') => {
+    lines.push(line);
+  };
+
+  pushLine('');
+  pushLine('=== Circuit Export Report ===');
 
   if (options.sections.summary) {
-    console.log(`Total gates: ${model.gates.length}`);
-    console.log(`Total connections: ${model.connections.length}`);
-    console.log(`Inputs: ${model.inputs.length} | Outputs: ${model.outputs.length}`);
+    pushLine(`Total gates: ${model.gates.length}`);
+    pushLine(`Total connections: ${model.connections.length}`);
+    pushLine(`Inputs: ${model.inputs.length} | Outputs: ${model.outputs.length}`);
   }
 
   if (options.sections.gateCounts) {
     const counts = computeGateCounts(model);
     if (!counts.length) {
-      console.log('Gate counts: n/a (no gates present)');
+      pushLine('Gate counts: n/a (no gates present)');
     } else {
-      console.log('Gate counts:');
+      pushLine('Gate counts:');
       counts.forEach(([type, count]) => {
-        console.log(`  - ${type}: ${count}`);
+        pushLine(`  - ${type}: ${count}`);
       });
     }
   }
 
   if (options.sections.gatePositions) {
     if (!model.gates.length) {
-      console.log('Gate positions: n/a (no gates present)');
+      pushLine('Gate positions: n/a (no gates present)');
     } else {
-      console.log('Gate positions:');
+      pushLine('Gate positions:');
       model.gates.slice(0, POSITION_LOG_LIMIT).forEach((gate) => {
-        console.log(`  - ${formatGateName(gate)} @ (${gate.x}, ${gate.y})`);
+        pushLine(`  - ${formatGateName(gate)} @ (${gate.x}, ${gate.y})`);
       });
       if (model.gates.length > POSITION_LOG_LIMIT) {
-        console.log(`  ... ${model.gates.length - POSITION_LOG_LIMIT} additional gates not shown`);
+        pushLine(`  ... ${model.gates.length - POSITION_LOG_LIMIT} additional gates not shown`);
       }
     }
   }
@@ -478,30 +484,30 @@ function printCircuitReport(snapshot, gateConfig = {}) {
   if (options.sections.spatialMetrics) {
     const metrics = computeSpatialMetrics(model);
     if (!metrics) {
-      console.log('Spatial metrics: n/a (no gates present)');
+      pushLine('Spatial metrics: n/a (no gates present)');
     } else {
-      console.log('Spatial metrics:');
-      console.log(`  - Bounds X: ${metrics.minX} → ${metrics.maxX} (width ${metrics.width})`);
-      console.log(`  - Bounds Y: ${metrics.minY} → ${metrics.maxY} (height ${metrics.height})`);
+      pushLine('Spatial metrics:');
+      pushLine(`  - Bounds X: ${metrics.minX} → ${metrics.maxX} (width ${metrics.width})`);
+      pushLine(`  - Bounds Y: ${metrics.minY} → ${metrics.maxY} (height ${metrics.height})`);
     }
   }
 
   if (options.sections.connectionSummary) {
     const summary = computeConnectionSummary(model);
-    console.log('Connection summary:');
-    console.log(`  - Total: ${summary.totalConnections}`);
-    console.log(`  - Avg fan-in: ${summary.averageFanIn.toFixed(2)}`);
-    console.log(`  - Avg fan-out: ${summary.averageFanOut.toFixed(2)}`);
+    pushLine('Connection summary:');
+    pushLine(`  - Total: ${summary.totalConnections}`);
+    pushLine(`  - Avg fan-in: ${summary.averageFanIn.toFixed(2)}`);
+    pushLine(`  - Avg fan-out: ${summary.averageFanOut.toFixed(2)}`);
     if (summary.topFanIn.length) {
-      console.log('  - Highest fan-in:');
+      pushLine('  - Highest fan-in:');
       summary.topFanIn.forEach((entry) => {
-        console.log(`      • ${formatGateName(entry.gate)} → ${entry.total} inputs`);
+        pushLine(`      • ${formatGateName(entry.gate)} → ${entry.total} inputs`);
       });
     }
     if (summary.topFanOut.length) {
-      console.log('  - Highest fan-out:');
+      pushLine('  - Highest fan-out:');
       summary.topFanOut.forEach((entry) => {
-        console.log(`      • ${formatGateName(entry.gate)} → ${entry.total} outputs`);
+        pushLine(`      • ${formatGateName(entry.gate)} → ${entry.total} outputs`);
       });
     }
   }
@@ -509,30 +515,30 @@ function printCircuitReport(snapshot, gateConfig = {}) {
   if (options.sections.floatingPins) {
     const floating = detectFloatingPins(model);
     if (!floating.openInputs.length && !floating.floatingOutputs.length) {
-      console.log('Connectivity check: all gate inputs and outputs are connected.');
+      pushLine('Connectivity check: all gate inputs and outputs are connected.');
     } else {
-      console.log('Connectivity diagnostics:');
+      pushLine('Connectivity diagnostics:');
       if (floating.openInputs.length) {
-        console.log('  Unconnected gate inputs:');
+        pushLine('  Unconnected gate inputs:');
         floating.openInputs.slice(0, FLOATING_PIN_LOG_LIMIT).forEach((entry) => {
-          console.log(`      • ${formatGateName(entry.gate)} input ${entry.portIndex}`);
+          pushLine(`      • ${formatGateName(entry.gate)} input ${entry.portIndex}`);
         });
         if (floating.openInputs.length > FLOATING_PIN_LOG_LIMIT) {
-          console.log(`      ... ${floating.openInputs.length - FLOATING_PIN_LOG_LIMIT} additional open inputs`);
+          pushLine(`      ... ${floating.openInputs.length - FLOATING_PIN_LOG_LIMIT} additional open inputs`);
         }
       } else {
-        console.log('  Unconnected gate inputs: none');
+        pushLine('  Unconnected gate inputs: none');
       }
       if (floating.floatingOutputs.length) {
-        console.log('  Gate outputs with no destinations:');
+        pushLine('  Gate outputs with no destinations:');
         floating.floatingOutputs.slice(0, FLOATING_PIN_LOG_LIMIT).forEach((gate) => {
-          console.log(`      • ${formatGateName(gate)}`);
+          pushLine(`      • ${formatGateName(gate)}`);
         });
         if (floating.floatingOutputs.length > FLOATING_PIN_LOG_LIMIT) {
-          console.log(`      ... ${floating.floatingOutputs.length - FLOATING_PIN_LOG_LIMIT} additional floating outputs`);
+          pushLine(`      ... ${floating.floatingOutputs.length - FLOATING_PIN_LOG_LIMIT} additional floating outputs`);
         }
       } else {
-        console.log('  Gate outputs with no destinations: none');
+        pushLine('  Gate outputs with no destinations: none');
       }
     }
   }
@@ -540,31 +546,44 @@ function printCircuitReport(snapshot, gateConfig = {}) {
   if (options.truthTable.enabled) {
     const table = generateTruthTable(model, options.truthTable);
     if (table.skipped) {
-      console.log(`Truth table: skipped (${table.reason})`);
+      pushLine(`Truth table: skipped (${table.reason})`);
     } else if (!table.rows.length) {
-      console.log('Truth table: no rows to display');
+      pushLine('Truth table: no rows to display');
     } else {
       const inputLabels = table.header.inputs.map((gate) => gate.label || gate.id);
       const outputLabels = table.header.outputs.map((gate) => gate.label || gate.id);
-      console.log(`Truth table (${table.rows.length}/${table.totalRows} rows${table.truncated ? ', truncated' : ''}):`);
+      pushLine(`Truth table (${table.rows.length}/${table.totalRows} rows${table.truncated ? ', truncated' : ''}):`);
       const leftHeader = inputLabels.length ? inputLabels.join(' ') : '(no inputs)';
       const rightHeader = outputLabels.length ? outputLabels.join(' ') : '(no outputs)';
-      console.log(`  ${leftHeader} || ${rightHeader}`);
+      pushLine(`  ${leftHeader} || ${rightHeader}`);
       table.rows.forEach((row) => {
         const left = row.inputs.length ? row.inputs.map((value) => (value ? 1 : 0)).join('   ') : '-';
         const right = row.outputs.length ? row.outputs.map((value) => (value ? 1 : 0)).join('   ') : '-';
-        console.log(`  ${left} || ${right}`);
+        pushLine(`  ${left} || ${right}`);
       });
       if (table.truncated) {
-        console.log(`  ... ${table.totalRows - table.rows.length} additional rows not shown`);
+        pushLine(`  ... ${table.totalRows - table.rows.length} additional rows not shown`);
       }
     }
   }
 
-  console.log('=== End of Circuit Report ===\n');
+  pushLine('=== End of Circuit Report ===');
+  pushLine('');
+
+  return lines;
+}
+
+function printCircuitReport(snapshot, gateConfig = {}) {
+  const lines = buildCircuitReportLines(snapshot, gateConfig);
+  if (!lines.length) {
+    return '';
+  }
+  lines.forEach((line) => console.log(line));
+  return lines.join('\n');
 }
 
 module.exports = {
   buildReportOptions,
+  buildCircuitReportLines,
   printCircuitReport
 };

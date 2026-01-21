@@ -30,6 +30,7 @@ const EXPORT_TIMEOUT_MS = 30000;
 // Track connected WebSocket clients
 const wsClients = new Set();
 let pendingExport = null;
+let lastCircuitReport = { text: '', createdAt: 0 };
 
 // MIME types for different file extensions
 const mimeTypes = {
@@ -211,7 +212,10 @@ function handlePostRequest(req, res) {
         ]);
         try {
           const gateConfig = await loadGateConfig();
-          printCircuitReport(state, gateConfig);
+          const reportText = printCircuitReport(state, gateConfig);
+          if (reportText) {
+            lastCircuitReport = { text: reportText, createdAt: Date.now() };
+          }
         } catch (reportError) {
           console.warn('Failed to generate export report:', reportError);
         }
@@ -354,6 +358,7 @@ const server = http.createServer((req, res) => {
     }
 
     const requestId = createExportRequestId();
+    const exportStartedAt = Date.now();
     const exportPromise = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         rejectPendingExport(new Error('Export timed out'));
@@ -380,10 +385,20 @@ const server = http.createServer((req, res) => {
           }));
           return;
         }
+        const reportReady = lastCircuitReport.text && lastCircuitReport.createdAt >= exportStartedAt;
+        const reportText = reportReady ? lastCircuitReport.text : '';
+        const accepts = req.headers.accept || '';
+        const wantsTextReport = parsedUrl.query?.format === 'report' || accepts.includes('text/plain');
+        if (wantsTextReport && reportText) {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(reportText);
+          return;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
           success: true,
-          message: 'Export completed via WebSocket'
+          message: 'Export completed via WebSocket',
+          report: reportText || undefined
         }));
       })
       .catch((error) => {

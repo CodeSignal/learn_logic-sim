@@ -26,5 +26,11 @@
       "maxInputs": 6,
       "maxRows": 64
     }
+  },
+  "exportOptions": {
+    "zeroInputsOnExport": true,
+    "pruneDisconnected": false,
+    "sanitizeLabels": true,
+    "truncateWireNames": 32
   }
 }

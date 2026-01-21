@@ -152,6 +152,7 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
 
     let paletteOrder = defaultPaletteOrder.slice();
     let viewCenterOverride = null;
+    let gateConfig = {};
 
     const state = {
       gates: new Map(),
@@ -224,6 +225,7 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
           return;
         }
         const data = await response.json();
+        gateConfig = data && typeof data === 'object' ? data : {};
         if (data && Array.isArray(data.paletteOrder)) {
           const filtered = data.paletteOrder.filter((type) => gateDefinitions[type]);
           if (filtered.length) {
@@ -412,14 +414,77 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
       window.setTimeout(resolve, delay);
     });
 
+    const pruneDisconnectedSnapshot = (snapshot) => {
+      if (!snapshot || !Array.isArray(snapshot.gates)) {
+        return snapshot;
+      }
+      const outputGateIds = new Set(
+        snapshot.gates.filter((gate) => gate.type === 'output').map((gate) => gate.id)
+      );
+      if (!outputGateIds.size) {
+        return snapshot;
+      }
+      const connections = Array.isArray(snapshot.connections) ? snapshot.connections : [];
+      const predecessors = new Map();
+      connections.forEach((connection) => {
+        const fromId = connection?.from?.gateId;
+        const toId = connection?.to?.gateId;
+        if (!fromId || !toId) {
+          return;
+        }
+        const list = predecessors.get(toId) || new Set();
+        list.add(fromId);
+        predecessors.set(toId, list);
+      });
+      const keepIds = new Set(outputGateIds);
+      const stack = Array.from(outputGateIds);
+      while (stack.length) {
+        const gateId = stack.pop();
+        const incoming = predecessors.get(gateId);
+        if (!incoming) {
+          continue;
+        }
+        incoming.forEach((sourceId) => {
+          if (!keepIds.has(sourceId)) {
+            keepIds.add(sourceId);
+            stack.push(sourceId);
+          }
+        });
+      }
+      const gates = snapshot.gates.filter((gate) => keepIds.has(gate.id));
+      const prunedConnections = connections.filter((connection) => (
+        keepIds.has(connection?.from?.gateId) && keepIds.has(connection?.to?.gateId)
+      ));
+      return { ...snapshot, gates, connections: prunedConnections };
+    };
+
+    const applyExportOverrides = (snapshot) => {
+      const exportOptions = gateConfig?.exportOptions || {};
+      if (!exportOptions.zeroInputsOnExport) {
+        return snapshot;
+      }
+      const gates = Array.isArray(snapshot.gates)
+        ? snapshot.gates.map((gate) => (gate.type === 'input' ? { ...gate, state: 0 } : gate))
+        : snapshot.gates;
+      return { ...snapshot, gates };
+    };
+
     const attemptExport = async () => {
       if (exportRetryTimer) {
         window.clearTimeout(exportRetryTimer);
         exportRetryTimer = null;
       }
       const originalSnapshot = getCircuitSnapshot();
-      const flattenedSnapshot = flattenSnapshotForExport(originalSnapshot, gateDefinitions);
-      const vhdl = serializeSnapshotToVhdl(flattenedSnapshot, gateDefinitions);
+      const exportSnapshot = applyExportOverrides(originalSnapshot);
+      const flattenedSnapshot = flattenSnapshotForExport(exportSnapshot, gateDefinitions);
+      const exportOptions = gateConfig?.exportOptions || {};
+      const finalSnapshot = exportOptions.pruneDisconnected
+        ? pruneDisconnectedSnapshot(flattenedSnapshot)
+        : flattenedSnapshot;
+      const vhdl = serializeSnapshotToVhdl(finalSnapshot, gateDefinitions, {
+        sanitizeLabels: exportOptions.sanitizeLabels,
+        truncateWireNames: exportOptions.truncateWireNames
+      });
       try {
         setStatus('Saving...');
         const response = await fetch('/vhdl/export', {
@@ -427,7 +492,7 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ vhdl, state: flattenedSnapshot })
+          body: JSON.stringify({ vhdl, state: finalSnapshot })
         });
         if (!response.ok) {
           throw new Error(`Export failed with status ${response.status}`);

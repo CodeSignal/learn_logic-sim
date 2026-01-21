@@ -1,4 +1,12 @@
-export const serializeSnapshotToVhdl = (snapshot = { gates: [], connections: [] }, gateDefinitions = {}) => {
+export const serializeSnapshotToVhdl = (
+  snapshot = { gates: [], connections: [] },
+  gateDefinitions = {},
+  options = {}
+) => {
+  const sanitizeLabels = options.sanitizeLabels !== false;
+  const truncateWireNames = Number.isFinite(options.truncateWireNames)
+    ? Math.max(8, Math.floor(options.truncateWireNames))
+    : null;
   const gateMap = new Map((snapshot.gates || []).map((gate) => [gate.id, gate]));
   const connectionLookup = new Map();
   (snapshot.connections || []).forEach((connection) => {
@@ -30,13 +38,22 @@ export const serializeSnapshotToVhdl = (snapshot = { gates: [], connections: [] 
   };
 
   const ensureUnique = (base) => {
-    let candidate = base;
+    const baseLower = (value) => value.toLowerCase();
+    const clamp = (value) => {
+      if (!truncateWireNames) {
+        return value;
+      }
+      return value.length > truncateWireNames ? value.slice(0, truncateWireNames) : value;
+    };
+    let candidate = clamp(base);
     let counter = 1;
-    while (usedNames.has(candidate.toLowerCase())) {
-      candidate = `${base}_${counter}`;
+    while (usedNames.has(baseLower(candidate))) {
+      const suffix = `_${counter}`;
+      const maxBase = truncateWireNames ? Math.max(1, truncateWireNames - suffix.length) : base.length;
+      candidate = clamp(`${base.slice(0, maxBase)}${suffix}`);
       counter += 1;
     }
-    usedNames.add(candidate.toLowerCase());
+    usedNames.add(baseLower(candidate));
     return candidate;
   };
 
@@ -52,7 +69,8 @@ export const serializeSnapshotToVhdl = (snapshot = { gates: [], connections: [] 
   };
 
   const getPortName = (gate) => {
-    const base = sanitizeIdentifier(gate.label || gate.type || 'output', `out_${portNameMap.size}`);
+    const labelSource = sanitizeLabels ? (gate.label || gate.type || 'output') : (gate.type || 'output');
+    const base = sanitizeIdentifier(labelSource, `out_${portNameMap.size}`);
     const unique = ensureUnique(base);
     portNameMap.set(gate.id, unique);
     return unique;

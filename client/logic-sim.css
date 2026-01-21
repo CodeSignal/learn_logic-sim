@@ -408,18 +408,29 @@
 }
 
 .gate-context-menu .menu-actions .icon-button {
-  width: 40px;
-  height: 40px;
-  padding: var(--bespoke-space-xs);
+  min-width: 44px;
+  min-height: 40px;
+  padding: var(--bespoke-button-padding-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.gate-context-menu .menu-actions .icon-button img {
+.gate-context-menu .menu-actions .icon-button img,
+.gate-context-menu .menu-actions .icon-button svg {
   width: 1.25rem;
   height: 1.25rem;
   pointer-events: none;
+}
+
+.gate-context-menu .menu-actions .icon-button svg {
+  fill: currentColor;
+}
+
+@media (prefers-color-scheme: dark) {
+  .gate-context-menu .menu-actions .icon-button img {
+    filter: invert(1) brightness(1.2);
+  }
 }
 
 

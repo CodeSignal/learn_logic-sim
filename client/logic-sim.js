@@ -14,7 +14,8 @@ import {
   WORLD_MAX_X,
   WORLD_MIN_Y,
   WORLD_MAX_Y,
-  COORDINATE_VERSION
+  COORDINATE_VERSION,
+  ROTATION_STEP
 } from './js/sim/constants.js';
 import {
   normalizeRotation,

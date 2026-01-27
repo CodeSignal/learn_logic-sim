@@ -11,12 +11,9 @@ export function initializeWebSocketBridge({ onExportRequest } = {}) {
   }
 
   let socket;
-  try {
-    socket = new WebSocket(getWebSocketUrl());
-  } catch (error) {
-    console.error('Failed to establish WebSocket connection:', error);
-    return null;
-  }
+  let reconnectTimer;
+  let reconnectAttempt = 0;
+  let shouldReconnect = true;
 
   const sendPayload = (payload) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -29,43 +26,83 @@ export function initializeWebSocketBridge({ onExportRequest } = {}) {
     }
   };
 
-  socket.addEventListener('message', async (event) => {
+  const scheduleReconnect = () => {
+    if (!shouldReconnect || reconnectTimer) {
+      return;
+    }
+    const baseDelay = 500;
+    const maxDelay = 10000;
+    const jitter = Math.random() * 250;
+    const delay = Math.min(maxDelay, baseDelay * (2 ** reconnectAttempt)) + jitter;
+    reconnectAttempt = Math.min(reconnectAttempt + 1, 6);
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
     try {
-      const payload = JSON.parse(event.data);
-      if (payload?.type === 'logic-sim:export-vhdl' && typeof onExportRequest === 'function') {
-        const requestId = payload.requestId;
-        try {
-          const result = await onExportRequest(payload);
-          if (requestId) {
-            sendPayload({
-              type: 'logic-sim:export-vhdl:done',
-              requestId,
-              success: result !== false,
-              error: result && result.error ? result.error : undefined
-            });
-          }
-        } catch (error) {
-          console.error('Failed to process export request:', error);
-          if (requestId) {
-            sendPayload({
-              type: 'logic-sim:export-vhdl:done',
-              requestId,
-              success: false,
-              error: error?.message || 'Export failed'
-            });
+      socket = new WebSocket(getWebSocketUrl());
+    } catch (error) {
+      console.error('Failed to establish WebSocket connection:', error);
+      scheduleReconnect();
+      return;
+    }
+
+    socket.addEventListener('open', () => {
+      reconnectAttempt = 0;
+    });
+
+    socket.addEventListener('message', async (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload?.type === 'logic-sim:export-vhdl' && typeof onExportRequest === 'function') {
+          const requestId = payload.requestId;
+          try {
+            const result = await onExportRequest(payload);
+            if (requestId) {
+              sendPayload({
+                type: 'logic-sim:export-vhdl:done',
+                requestId,
+                success: result !== false,
+                error: result && result.error ? result.error : undefined
+              });
+            }
+          } catch (error) {
+            console.error('Failed to process export request:', error);
+            if (requestId) {
+              sendPayload({
+                type: 'logic-sim:export-vhdl:done',
+                requestId,
+                success: false,
+                error: error?.message || 'Export failed'
+              });
+            }
           }
         }
+      } catch (error) {
+        console.error('Failed to handle WebSocket message:', error);
       }
-    } catch (error) {
-      console.error('Failed to handle WebSocket message:', error);
-    }
-  });
+    });
 
-  socket.addEventListener('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
+    socket.addEventListener('error', (error) => {
+      console.error('WebSocket error:', error);
+    });
+
+    socket.addEventListener('close', () => {
+      scheduleReconnect();
+    });
+  };
+
+  connect();
 
   return () => {
+    shouldReconnect = false;
+    if (reconnectTimer) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.close();
     }

@@ -193,7 +193,7 @@ function handlePostRequest(req, res) {
         return;
       }
 
-      const { vhdl, state } = data || {};
+      const { vhdl, state, exportState } = data || {};
       if (typeof vhdl !== 'string') {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Field "vhdl" is required' }));
@@ -212,7 +212,8 @@ function handlePostRequest(req, res) {
         ]);
         try {
           const gateConfig = await loadGateConfig();
-          const reportText = printCircuitReport(state, gateConfig);
+          const reportState = exportState && typeof exportState === 'object' ? exportState : state;
+          const reportText = printCircuitReport(reportState, gateConfig);
           if (reportText) {
             lastCircuitReport = { text: reportText, createdAt: Date.now() };
           }

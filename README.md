@@ -65,7 +65,7 @@ Logic Circuit Lab is a browser-based playground for sketching, simulating, and e
 - Build a circuit with the standard palette, export it via `window.logicSim.snapshot()` (or copy `state.json`), and drop that JSON file into `client/custom-gates/` to turn it into a reusable gate without duplicating its contents.
 - Input and output pins for the custom gate are inferred from the `input` and `output` gates inside the JSON snapshot (their labels become the exposed port names). Simulation treats the custom gate as a black box by running the nested snapshot with the same propagation engine.
 - Snapshots embedded in saved circuits (or discovered under `client/custom-gates/`) automatically appear in the main palette alongside the built-in gates.
-- VHDL exports automatically flatten any custom gates, so you can keep them in your design and still obtain a complete netlist (the written `state.json` mirrors that flattened export).
+- VHDL exports automatically flatten any custom gates, so you can keep them in your design and still obtain a complete netlist while `state.json` preserves the original snapshot (including custom gate definitions).
 
 ---
 
@@ -91,7 +91,8 @@ Logic Circuit Lab is a browser-based playground for sketching, simulating, and e
    ```json
    {
      "vhdl": "<generated code>",
-     "state": { ...current circuit snapshot... }
+     "state": { ...current circuit snapshot... },
+     "exportState": { ...flattened export snapshot... }
    }
    ```
    to `POST /vhdl/export`.
@@ -118,7 +119,7 @@ Logic Circuit Lab is a browser-based playground for sketching, simulating, and e
 
 ## Server API & Messaging
 - `GET /` (and static assets) – serves files from `client/`.
-- `POST /vhdl/export` – accepts `{ vhdl: string, state: object }`, writes artifacts, prints reports, responds with `{ success: true }` on success.
+- `POST /vhdl/export` – accepts `{ vhdl: string, state: object, exportState?: object }`, writes artifacts, prints reports, responds with `{ success: true }` on success.
 - `POST /message` – accepts `{ message: string }`, broadcasts it to every connected WebSocket client (`ws` package required). Clients show an alert with the message body.
 - WebSockets – automatically enabled when the `ws` dependency is installed. Connections are logged, and messages flow only from `/message` to the clients; there is no inbound command channel yet.
 

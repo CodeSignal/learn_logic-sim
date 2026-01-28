@@ -492,7 +492,11 @@ import { serializeSnapshotToVhdl } from './js/sim/vhdl.js';
           headers: {
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ vhdl, state: finalSnapshot })
+          body: JSON.stringify({
+            vhdl,
+            state: originalSnapshot,
+            exportState: finalSnapshot
+          })
         });
         if (!response.ok) {
           throw new Error(`Export failed with status ${response.status}`);
